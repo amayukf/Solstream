@@ -1,0 +1,626 @@
+"use client";
+
+import React, { useState, useEffect, useCallback } from "react";
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { useSolStreamProgram } from "@/hooks/useSolStreamProgram";
+import {
+  getStoredCreator,
+  getCreatorByWallet,
+  getActiveHandle,
+  saveStoredCreator,
+  getStoredTips,
+  TipRecord,
+} from "@/lib/storage";
+import { SolanaLogo } from "@/components/SolanaLogo";
+import {
+  Copy,
+  Check,
+  ExternalLink,
+  Loader2,
+  AlertCircle,
+  Inbox,
+  Sparkles,
+} from "lucide-react";
+
+const WalletMultiButton = dynamic(
+  async () =>
+    (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
+  { ssr: false }
+);
+
+const VOICES = [
+  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam" },
+  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel" },
+  { id: "ErXwobaYiN019PkySvjV", name: "Antoni" },
+];
+
+export default function CreatorDashboardPage() {
+  const { connected, publicKey } = useWallet();
+  const {
+    getCreatorPda,
+    fetchCreatorAccount,
+    initializeCreator,
+    updateGoal,
+    updateVoice,
+  } = useSolStreamProgram();
+
+  const [username, setUsername] = useState<string | null>(null);
+  const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
+  const [isCopied, setIsCopied] = useState(false);
+  const [isUpdatingGoal, setIsUpdatingGoal] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isCheckingAccount, setIsCheckingAccount] = useState(true);
+
+  // Goal & stats
+  const [goalTitle, setGoalTitle] = useState("Mic upgrade");
+  const [goalTargetSol, setGoalTargetSol] = useState("3.0");
+  const [currentGoalSol, setCurrentGoalSol] = useState(0);
+  const [totalTipsCount, setTotalTipsCount] = useState(0);
+  const [totalVolumeSol, setTotalVolumeSol] = useState(0);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // Real tips from localStorage
+  const [tips, setTips] = useState<TipRecord[]>([]);
+
+  // Refresh real tips from localStorage
+  const refreshDashboardTips = useCallback((uname: string) => {
+    if (!uname) return;
+    const realTips = getStoredTips(uname);
+    setTips(realTips);
+
+    // Compute real totals
+    const totalLamports = realTips.reduce((acc, t) => acc + t.amountLamports, 0);
+    setTotalVolumeSol(totalLamports / 1_000_000_000);
+    setTotalTipsCount(realTips.length);
+  }, []);
+
+  // Dynamically find creator profile by wallet address & on-chain PDA
+  useEffect(() => {
+    async function loadWalletCreator() {
+      setIsCheckingAccount(true);
+
+      if (!publicKey) {
+        // Fallback to active handle if any
+        const active = getActiveHandle();
+        if (active) {
+          const stored = getStoredCreator(active);
+          if (stored) {
+            setUsername(stored.username);
+            setGoalTitle(stored.goalTitle);
+            setGoalTargetSol((stored.goalTargetLamports / 1_000_000_000).toString());
+            setSelectedVoice(stored.voiceId);
+            refreshDashboardTips(stored.username);
+          }
+        } else {
+          setUsername(null);
+        }
+        setIsCheckingAccount(false);
+        return;
+      }
+
+      const walletStr = publicKey.toBase58();
+
+      // 1. Check on-chain PDA first (ultimate source of truth)
+      try {
+        const pda = getCreatorPda(publicKey);
+        const acc = await fetchCreatorAccount(pda);
+        if (acc) {
+          const walletCreator = getCreatorByWallet(walletStr);
+          const active = getActiveHandle();
+          const stored = walletCreator || (active ? getStoredCreator(active) : null);
+          const onChainHandle = (acc.username || stored?.username || "amayu").toLowerCase();
+
+          setUsername(onChainHandle);
+          setIsInitialized(true);
+
+          const target = acc.goalTargetLamports || acc.goal_target_lamports;
+          const current = acc.goalCurrentLamports || acc.goal_current_lamports;
+
+          setGoalTitle(acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal");
+          if (target !== undefined && target !== null) {
+            const targetVal = typeof target === "number" ? target : target.toNumber ? target.toNumber() : Number(target);
+            setGoalTargetSol((targetVal / 1_000_000_000).toString());
+          }
+          if (current !== undefined && current !== null) {
+            const currentVal = typeof current === "number" ? current : current.toNumber ? current.toNumber() : Number(current);
+            setCurrentGoalSol(currentVal / 1_000_000_000);
+          }
+          if (acc.voiceId || acc.voice_id || stored?.voiceId) {
+            setSelectedVoice(acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id);
+          }
+
+          // Sync to localStorage
+          saveStoredCreator({
+            username: onChainHandle,
+            authority: walletStr,
+            voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
+            goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
+            goalTargetLamports: target ? (typeof target === "number" ? target : target.toNumber ? target.toNumber() : Number(target)) : (stored?.goalTargetLamports || 3_000_000_000),
+            goalCurrentLamports: current ? (typeof current === "number" ? current : current.toNumber ? current.toNumber() : Number(current)) : (stored?.goalCurrentLamports || 0),
+            createdAt: Date.now(),
+          });
+
+          refreshDashboardTips(onChainHandle);
+          setIsCheckingAccount(false);
+          return;
+        }
+      } catch (e) {
+        console.log("On-chain check finished:", e);
+      }
+
+      // 2. Check localStorage for a creator registered to this specific wallet
+      const walletCreator = getCreatorByWallet(walletStr);
+      if (walletCreator) {
+        setUsername(walletCreator.username);
+        setGoalTitle(walletCreator.goalTitle);
+        setGoalTargetSol((walletCreator.goalTargetLamports / 1_000_000_000).toString());
+        setSelectedVoice(walletCreator.voiceId);
+        setIsInitialized(false); // needs on-chain initialization
+        refreshDashboardTips(walletCreator.username);
+      } else {
+        // Check active handle if created in this session
+        const active = getActiveHandle();
+        const stored = active ? getStoredCreator(active) : null;
+        if (stored && stored.authority.toLowerCase() === walletStr.toLowerCase()) {
+          setUsername(stored.username);
+          setGoalTitle(stored.goalTitle);
+          setGoalTargetSol((stored.goalTargetLamports / 1_000_000_000).toString());
+          setSelectedVoice(stored.voiceId);
+          setIsInitialized(false);
+          refreshDashboardTips(stored.username);
+        } else {
+          setUsername(null);
+          setIsInitialized(false);
+        }
+      }
+
+      setIsCheckingAccount(false);
+    }
+
+    loadWalletCreator();
+  }, [publicKey, getCreatorPda, fetchCreatorAccount, refreshDashboardTips]);
+
+  const shortWallet = publicKey
+    ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
+    : null;
+
+  const overlayUrl = typeof window !== "undefined" && username
+    ? `${window.location.origin}/overlay/${username}`
+    : username
+    ? `https://solstream.app/overlay/${username}`
+    : "";
+
+  const handleCopyOverlay = () => {
+    if (!overlayUrl) return;
+    navigator.clipboard.writeText(overlayUrl);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2500);
+  };
+
+  const handleInitOnChain = async () => {
+    if (!connected || !publicKey || !username) return;
+    setIsInitializing(true);
+    setStatusMessage(null);
+    try {
+      const lamports = Math.round(parseFloat(goalTargetSol) * 1_000_000_000);
+      await initializeCreator(username, selectedVoice, lamports, goalTitle);
+      setIsInitialized(true);
+      saveStoredCreator({
+        username,
+        authority: publicKey.toBase58(),
+        voiceId: selectedVoice,
+        goalTitle,
+        goalTargetLamports: lamports,
+        goalCurrentLamports: 0,
+        createdAt: Date.now(),
+      });
+      setStatusMessage(`✅ @${username} successfully initialized on Solana Devnet!`);
+    } catch (err: any) {
+      console.error(err);
+      const errMsg = err?.message || String(err);
+      if (
+        errMsg.includes("already in use") ||
+        errMsg.includes("0x0") ||
+        errMsg.includes("AccountAlreadyInUse")
+      ) {
+        setIsInitialized(true);
+        saveStoredCreator({
+          username,
+          authority: publicKey.toBase58(),
+          voiceId: selectedVoice,
+          goalTitle,
+          goalTargetLamports: Math.round(parseFloat(goalTargetSol) * 1_000_000_000),
+          goalCurrentLamports: 0,
+          createdAt: Date.now(),
+        });
+        setStatusMessage(`✅ @${username} is already active on Solana Devnet!`);
+      } else {
+        setStatusMessage(`❌ Error initializing: ${errMsg}`);
+      }
+    } finally {
+      setIsInitializing(false);
+    }
+  };
+
+  const handleUpdateGoal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!connected) return;
+    setIsUpdatingGoal(true);
+    setStatusMessage(null);
+    try {
+      const lamports = Math.round(parseFloat(goalTargetSol) * 1_000_000_000);
+      await updateGoal(lamports, goalTitle);
+      setCurrentGoalSol(0);
+      setStatusMessage("✅ Goal updated on-chain!");
+    } catch (err: any) {
+      setStatusMessage(`❌ Error: ${err?.message || "Failed to update goal."}`);
+    } finally {
+      setIsUpdatingGoal(false);
+    }
+  };
+
+  const handleSelectVoice = async (voiceId: string) => {
+    setSelectedVoice(voiceId);
+    if (!connected || !isInitialized) return;
+    try {
+      await updateVoice(voiceId);
+      setStatusMessage("✅ Voice persona updated on-chain!");
+    } catch (e) {
+      console.log("Voice updated locally:", e);
+    }
+  };
+
+  const goalPercentage = Math.min(
+    Math.round((currentGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
+    100
+  );
+
+  return (
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] pb-24">
+      {/* Top Bar */}
+      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="flex items-center gap-2">
+            <SolanaLogo className="w-6 h-5" />
+            <span className="text-xl font-bold tracking-tight text-white">
+              Creator Studio
+            </span>
+          </Link>
+          {username && (
+            <span className="px-2.5 py-0.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-semibold text-[#14F195]">
+              @{username}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-4">
+          {username && (
+            <Link
+              href={`/${username}`}
+              target="_blank"
+              className="px-4 py-2 rounded-xl bg-[#13141F] hover:bg-[#1A1B29] text-xs font-semibold text-zinc-300 border border-white/10 transition-colors"
+            >
+              View public tip page
+            </Link>
+          )}
+
+          {connected ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono text-zinc-300">
+              <span className="w-2 h-2 rounded-full bg-[#14F195]" />
+              <span>{shortWallet}</span>
+            </div>
+          ) : (
+            <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
+          )}
+        </div>
+      </header>
+
+      {/* Main Studio Body */}
+      <main className="max-w-7xl mx-auto px-6 space-y-6">
+        {/* Status notification */}
+        {statusMessage && (
+          <div className="p-3.5 rounded-2xl bg-[#13141F] border border-white/10 text-xs text-white">
+            {statusMessage}
+          </div>
+        )}
+
+        {/* If user hasn't claimed a handle yet */}
+        {!isCheckingAccount && !username && (
+          <div className="p-8 rounded-3xl bg-[#13141F] border border-white/10 text-center space-y-4 max-w-2xl mx-auto shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-[#9945FF]/10 text-[#9945FF] flex items-center justify-center mx-auto border border-[#9945FF]/20">
+              <Sparkles className="w-7 h-7" />
+            </div>
+            <h2 className="text-2xl font-black text-white">
+              Create Your Creator Profile
+            </h2>
+            <p className="text-sm text-zinc-400 max-w-md mx-auto leading-relaxed">
+              You haven&apos;t claimed a creator handle for your wallet yet. Claim your custom username to start receiving direct on-chain SOL tips with OBS stream alerts.
+            </p>
+            <div className="pt-2">
+              <Link
+                href="/claim"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm tracking-wide shadow-lg shadow-[#14F195]/20 transition-all"
+              >
+                <span>Claim Your Handle on Solana</span>
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Warning if wallet has handle in localStorage but not yet on-chain */}
+        {username && connected && !isInitialized && (
+          <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+              <span>
+                <strong>Account Not Initialized On-Chain:</strong> Your handle <strong>@{username}</strong> is ready, but your wallet needs to sign one transaction on Devnet so viewers can tip directly into your wallet.
+              </span>
+            </div>
+            <button
+              onClick={handleInitOnChain}
+              disabled={isInitializing}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs tracking-wide transition-all shadow-lg flex-shrink-0 flex items-center gap-2 disabled:opacity-50"
+            >
+              {isInitializing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-black" />
+                  <span>Signing on Solana...</span>
+                </>
+              ) : (
+                <span>Initialize @{username} on Solana</span>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Dashboard Content when username exists */}
+        {username && (
+          <>
+            {/* ROW 1: OBS BROWSER SOURCE URL BANNER */}
+            <div className="w-full rounded-2xl bg-[#13141F] border border-[#9945FF]/40 p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-xl">
+              <div className="space-y-1">
+                <div className="text-xs font-black uppercase tracking-wider text-[#9945FF]">
+                  YOUR OBS BROWSER SOURCE URL
+                </div>
+                <p className="text-xs text-zinc-400">
+                  Add it as a Browser Source (1920 × 1080) and tick &ldquo;Control audio via OBS&rdquo;.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="px-4 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-[#14F195] truncate max-w-sm sm:max-w-md select-all">
+                  {overlayUrl}
+                </div>
+                <button
+                  onClick={handleCopyOverlay}
+                  className="px-4 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex items-center gap-1.5 flex-shrink-0"
+                >
+                  {isCopied ? (
+                    <>
+                      <Check className="w-4 h-4 text-[#14F195]" />
+                      <span>Copied!</span>
+                    </>
+                  ) : (
+                    <span>Copy URL</span>
+                  )}
+                </button>
+                <Link
+                  href={`/overlay/${username}`}
+                  target="_blank"
+                  className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors"
+                  title="Preview overlay"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </Link>
+              </div>
+            </div>
+
+            {/* ROW 2: 3 REAL METRICS CARDS */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2">
+                  TOTAL EARNED
+                </div>
+                <div className="text-3xl font-black text-white font-mono mb-2">
+                  {totalVolumeSol.toFixed(3)} SOL
+                </div>
+                <p className="text-xs text-zinc-500">
+                  Straight to your wallet, no platform cut
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2">
+                  TIPS RECEIVED
+                </div>
+                <div className="text-3xl font-black text-white font-mono mb-2">
+                  {totalTipsCount}
+                </div>
+                <p className="text-xs text-zinc-500">
+                  Verified on Solana Devnet
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2">
+                  ACTIVE GOAL · {goalTitle.toUpperCase()}
+                </div>
+                <div className="text-3xl font-black text-[#14F195] font-mono mb-2">
+                  {goalPercentage}%
+                </div>
+                <div className="w-full h-2.5 bg-black/50 rounded-full overflow-hidden p-0.5 border border-white/5">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#9945FF] to-[#14F195] transition-all duration-500"
+                    style={{ width: `${Math.max(goalPercentage, 3)}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* ROW 3: TWO MAIN PANELS */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Stream Goal & Alert Voice (6 cols) */}
+              <div className="lg:col-span-6 space-y-6">
+                {/* Stream Goal Card */}
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                  <h2 className="text-sm font-bold text-white mb-4">Stream goal</h2>
+                  <form onSubmit={handleUpdateGoal} className="flex items-center gap-3">
+                    <input
+                      type="text"
+                      value={goalTitle}
+                      onChange={(e) => setGoalTitle(e.target.value)}
+                      className="flex-1 bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
+                    />
+                    <div className="w-24">
+                      <input
+                        type="text"
+                        value={`${goalTargetSol} SOL`}
+                        onChange={(e) =>
+                          setGoalTargetSol(e.target.value.replace(/[^0-9.]/g, ""))
+                        }
+                        className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-[#9945FF]"
+                      />
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={isUpdatingGoal || !connected || !isInitialized}
+                      className="px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs leading-none text-center flex-shrink-0 disabled:opacity-50"
+                    >
+                      {isUpdatingGoal ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-[#090A0F]" />
+                      ) : (
+                        <span>Save on-chain</span>
+                      )}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Alert Voice Card */}
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                  <h2 className="text-sm font-bold text-white mb-4">Alert voice</h2>
+                  <div className="grid grid-cols-3 gap-3">
+                    {VOICES.map((v) => {
+                      const isSelected = selectedVoice === v.id;
+                      return (
+                        <div
+                          key={v.id}
+                          onClick={() => handleSelectVoice(v.id)}
+                          className={`p-3.5 rounded-2xl cursor-pointer transition-all ${
+                            isSelected
+                              ? "bg-[#1E1838] border-2 border-[#9945FF]"
+                              : "bg-[#090A0F] border border-white/10 hover:border-white/20"
+                          }`}
+                        >
+                          <div className="text-xs font-bold text-white mb-2">
+                            {v.name}
+                          </div>
+
+                          <div className="flex items-end gap-1 h-5 mb-3">
+                            <span className="w-1 h-2 bg-[#9945FF] rounded-full" />
+                            <span className="w-1 h-4 bg-[#9945FF] rounded-full" />
+                            <span className="w-1 h-3 bg-[#9945FF] rounded-full" />
+                            <span className="w-1 h-5 bg-[#9945FF] rounded-full" />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (typeof window !== "undefined" && window.speechSynthesis) {
+                                const u = new SpeechSynthesisUtterance(
+                                  `Hi, this is ${v.name} reading your stream alerts live on SolStream!`
+                                );
+                                window.speechSynthesis.speak(u);
+                              }
+                            }}
+                            className="text-[10px] text-zinc-400 hover:text-white"
+                          >
+                            Preview
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Live Tip Ledger (6 cols) */}
+              <div className="lg:col-span-6">
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-bold text-white">Live tip ledger</h2>
+                    <div className="flex items-center gap-1.5 text-xs text-[#14F195] font-semibold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#14F195] animate-pulse" />
+                      <span>Realtime</span>
+                    </div>
+                  </div>
+
+                  {/* Table with real tips */}
+                  {tips.length === 0 ? (
+                    <div className="py-12 text-center text-xs text-zinc-500 space-y-2">
+                      <Inbox className="w-8 h-8 mx-auto text-zinc-600" />
+                      <p>No tips recorded yet.</p>
+                      <p className="text-[11px] text-zinc-600">
+                        Tips sent on your public page will appear live here with Solscan proofs.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="text-zinc-500 font-bold uppercase tracking-wider border-b border-white/5 pb-2">
+                            <th className="py-2">AMOUNT</th>
+                            <th className="py-2">FAN</th>
+                            <th className="py-2">MESSAGE</th>
+                            <th className="py-2 text-right">PROOF</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5 text-zinc-300">
+                          {tips.map((t) => {
+                            const solAmt = (t.amountLamports / 1_000_000_000).toFixed(3);
+                            const solscanUrl = `https://solscan.io/tx/${t.signature}?cluster=devnet`;
+                            return (
+                              <tr key={t.signature}>
+                                <td className="py-3 font-mono font-bold text-white">
+                                  {solAmt} SOL
+                                </td>
+                                <td className="py-3 font-semibold">{t.displayName}</td>
+                                <td className="py-3 text-zinc-400 italic max-w-xs truncate">
+                                  &ldquo;{t.message}&rdquo;
+                                </td>
+                                <td className="py-3 text-right">
+                                  <a
+                                    href={solscanUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[#9945FF] hover:underline"
+                                  >
+                                    View tx
+                                  </a>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* Cashing out to birr footer note */}
+                  <div className="pt-3 border-t border-white/5 text-[11px] text-zinc-500 leading-relaxed">
+                    <strong>Cashing out to birr:</strong> options depend on local
+                    rules. Many creators swap to USDC and use a P2P marketplace.
+                    Check what is allowed where you live.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+    </div>
+  );
+}

@@ -1,0 +1,121 @@
+{
+  "address": "BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA",
+  "metadata": {
+    "name": "solstream",
+    "version": "0.1.0",
+    "spec": "0.1.0"
+  },
+  "instructions": [
+    {
+      "name": "initialize_creator",
+      "discriminator": [29, 153, 44, 99, 52, 172, 81, 115],
+      "accounts": [
+        { "name": "creator_account", "writable": true },
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "username", "type": "string" },
+        { "name": "voice_id", "type": "string" },
+        { "name": "goal_target", "type": "u64" },
+        { "name": "goal_title", "type": "string" }
+      ]
+    },
+    {
+      "name": "send_tip",
+      "discriminator": [231, 88, 56, 242, 241, 6, 31, 59],
+      "accounts": [
+        { "name": "donor", "writable": true, "signer": true },
+        { "name": "creator_account", "writable": true },
+        { "name": "authority", "writable": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": [
+        { "name": "amount", "type": "u64" },
+        { "name": "tier", "type": "u8" },
+        { "name": "display_name", "type": "string" },
+        { "name": "message", "type": "string" }
+      ]
+    },
+    {
+      "name": "update_goal",
+      "discriminator": [143, 149, 87, 239, 70, 114, 214, 221],
+      "accounts": [
+        { "name": "creator_account", "writable": true },
+        { "name": "authority", "signer": true }
+      ],
+      "args": [
+        { "name": "new_target", "type": "u64" },
+        { "name": "new_title", "type": "string" }
+      ]
+    },
+    {
+      "name": "update_voice",
+      "discriminator": [51, 186, 93, 130, 151, 123, 150, 152],
+      "accounts": [
+        { "name": "creator_account", "writable": true },
+        { "name": "authority", "signer": true }
+      ],
+      "args": [
+        { "name": "new_voice_id", "type": "string" }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "CreatorAccount",
+      "discriminator": [222, 163, 32, 169, 204, 8, 200, 32]
+    }
+  ],
+  "events": [
+    {
+      "name": "TipEvent",
+      "discriminator": [213, 36, 191, 50, 28, 25, 189, 252]
+    }
+  ],
+  "errors": [
+    { "code": 6000, "name": "InvalidUsername", "msg": "Username must be 1-32 chars of a-z, 0-9 or _" },
+    { "code": 6001, "name": "VoiceIdTooLong", "msg": "Voice ID too long" },
+    { "code": 6002, "name": "GoalTitleTooLong", "msg": "Goal title too long" },
+    { "code": 6003, "name": "DisplayNameTooLong", "msg": "Display name too long" },
+    { "code": 6004, "name": "MessageTooLong", "msg": "Message too long" },
+    { "code": 6005, "name": "TipTooSmall", "msg": "Tip is below the minimum amount" },
+    { "code": 6006, "name": "InvalidTier", "msg": "Invalid gift tier" },
+    { "code": 6007, "name": "WrongRecipient", "msg": "Recipient does not match the creator's wallet" },
+    { "code": 6008, "name": "MathOverflow", "msg": "Math overflow" }
+  ],
+  "types": [
+    {
+      "name": "CreatorAccount",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "authority", "type": "pubkey" },
+          { "name": "username", "type": "string" },
+          { "name": "voice_id", "type": "string" },
+          { "name": "goal_title", "type": "string" },
+          { "name": "goal_target_lamports", "type": "u64" },
+          { "name": "goal_current_lamports", "type": "u64" },
+          { "name": "total_tips", "type": "u64" },
+          { "name": "total_volume", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "TipEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "creator", "type": "pubkey" },
+          { "name": "donor", "type": "pubkey" },
+          { "name": "amount", "type": "u64" },
+          { "name": "tier", "type": "u8" },
+          { "name": "display_name", "type": "string" },
+          { "name": "message", "type": "string" },
+          { "name": "timestamp", "type": "i64" }
+        ]
+      }
+    }
+  ]
+}
