@@ -48,7 +48,7 @@ describe("solstream", () => {
   ) =>
     program.methods
       .sendTip(new BN(amountSol * LAMPORTS_PER_SOL), tier, name, msg)
-      .accounts({
+      .accountsPartial({
         donor: donor.publicKey,
         creatorAccount: creatorPda,
         authority: recipient,
@@ -69,7 +69,7 @@ describe("solstream", () => {
 
     await program.methods
       .initializeCreator(handle, "pNInz6obpgDQGcFmaJgB", new BN(3 * LAMPORTS_PER_SOL), "Mic Upgrade")
-      .accounts({
+      .accountsPartial({
         creatorAccount: creatorPda,
         handleRegistry: handlePda,
         authority: creator.publicKey,
@@ -82,7 +82,7 @@ describe("solstream", () => {
     assert.equal(acc.username, handle);
     assert.equal(acc.goalCurrentLamports.toNumber(), 0);
 
-    const reg = await (program.account as any).handleRegistry.fetch(handlePda);
+    const reg = await program.account.handleRegistry.fetch(handlePda);
     assert.equal(reg.authority.toBase58(), creator.publicKey.toBase58());
   });
 
@@ -99,7 +99,7 @@ describe("solstream", () => {
       () =>
         program.methods
           .initializeCreator("kmoney", "pNInz6obpgDQGcFmaJgB", new BN(1 * LAMPORTS_PER_SOL), "Copycat")
-          .accounts({
+          .accountsPartial({
             creatorAccount: secondCreatorPda,
             handleRegistry: duplicateHandlePda,
             authority: secondWallet.publicKey,
@@ -123,7 +123,7 @@ describe("solstream", () => {
       () =>
         program.methods
           .initializeCreator("Bad Name!", "v", new BN(1), "t")
-          .accounts({
+          .accountsPartial({
             creatorAccount: pda,
             handleRegistry: badHandlePda,
             authority: other.publicKey,
@@ -143,7 +143,7 @@ describe("solstream", () => {
       () =>
         program.methods
           .registerExistingHandle()
-          .accounts({
+          .accountsPartial({
             creatorAccount: creatorPda,
             handleRegistry: handlePda,
             authority: stranger.publicKey,
@@ -159,7 +159,7 @@ describe("solstream", () => {
       () =>
         program.methods
           .registerExistingHandle()
-          .accounts({
+          .accountsPartial({
             creatorAccount: creatorPda,
             handleRegistry: handlePda,
             authority: creator.publicKey,

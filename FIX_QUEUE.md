@@ -86,7 +86,7 @@ Files: `package.json`, `package-lock.json`, dynamic routes, ESLint config.
 - Run `npm audit`, typecheck, build, and smoke-test key routes.
 Acceptance: build/typecheck pass; critical Next advisories resolved; wallet/routes still work.
 
-## [ ] Fix 10 — Anchor build/tests
+## [x] Fix 10 — Anchor build/tests
 Files: `Anchor.toml`, `Cargo.toml`, `programs/solstream/Cargo.toml`, `tests/solstream.ts`, `package.json`, `tsconfig.json`.
 - Add standard Anchor workspace scaffolding with the existing program ID.
 - Add test deps/scripts; generate `target/types/solstream.ts`.

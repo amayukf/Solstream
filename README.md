@@ -77,6 +77,27 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 
 ---
 
+## 🧪 Typechecking, Linting & Anchor Tests
+
+### Frontend & API Checks
+```bash
+npm run typecheck
+npm run lint
+npm run build
+```
+
+### Anchor Smart Contract Build & Test Setup
+This workspace includes standard Anchor `0.30.1` scaffolding ([`Anchor.toml`](./Anchor.toml), [`Cargo.toml`](./Cargo.toml), [`programs/solstream/Cargo.toml`](./programs/solstream/Cargo.toml), and [`target/types/solstream.ts`](./target/types/solstream.ts)) bound to program ID `BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`.
+
+To build the Solana program and run the full Anchor Mocha test suite in [`tests/solstream.ts`](./tests/solstream.ts) (requires Rust, Solana CLI, and Anchor CLI `0.30.1`, e.g. on Linux/macOS/WSL2 or via GitHub Actions CI in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)):
+```bash
+# Install Anchor 0.30.1 + Solana CLI, then:
+anchor build
+npm test   # runs `anchor test` against local validator
+```
+
+---
+
 ## 🔒 Security & Least-Privilege Database Role
 
 - **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Provide the Supabase root CA via `DATABASE_SSL_CA` or `PGSSLROOTCERT` for hosted Postgres pooler connections.
