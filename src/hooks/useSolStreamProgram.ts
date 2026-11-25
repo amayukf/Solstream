@@ -110,7 +110,12 @@ export function useSolStreamProgram() {
         { commitment: "confirmed" }
       );
 
-    return new Program(IDL as any, currentProvider);
+    const configuredIdl = {
+      ...(IDL as Record<string, unknown>),
+      address: PROGRAM_ID.toBase58(),
+    };
+
+    return new Program(configuredIdl as any, currentProvider);
   }, [provider, connection]);
 
   const getCreatorPda = useCallback((authority: PublicKey) => {
