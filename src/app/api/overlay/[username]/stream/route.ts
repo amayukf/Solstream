@@ -4,6 +4,7 @@ import {
   fetchRecentTipsForCreator,
   OnChainTip,
 } from "@/lib/solanaServer";
+import { getCreatorFromDb, getTipsFromDb } from "@/lib/supabaseDb";
 
 export const dynamic = "force-dynamic";
 
@@ -48,12 +49,15 @@ export async function GET(
 
       req.signal.addEventListener("abort", cleanup);
 
-      // Push initial real on-chain creator & recent tips snapshot immediately
+      // Push initial creator & recent tips snapshot immediately (Supabase first, Devnet fallback)
       try {
-        const creator = await fetchOnChainCreatorByUsername(username);
-        const tips = creator
-          ? await fetchRecentTipsForCreator(username, creator.pda)
-          : [];
+        const dbCreator = await getCreatorFromDb(username);
+        const creator =
+          dbCreator || (await fetchOnChainCreatorByUsername(username));
+        let tips = dbCreator ? await getTipsFromDb(username) : [];
+        if (tips.length === 0 && creator) {
+          tips = await fetchRecentTipsForCreator(username, creator.pda);
+        }
         send("init", { creator, tips });
       } catch {
         send("init", { creator: null, tips: [] });

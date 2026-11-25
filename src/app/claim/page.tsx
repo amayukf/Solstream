@@ -152,6 +152,13 @@ function ClaimHandleForm() {
         createdAt: Date.now(),
       });
 
+      // Sync creator PDA into Supabase Postgres
+      await fetch("/api/creators/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+      }).catch(() => {});
+
       // Redirect to creator dashboard
       router.push("/dashboard");
     } catch (err: any) {

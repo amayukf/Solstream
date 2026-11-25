@@ -14,6 +14,7 @@ import {
   TipRecord,
 } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Copy,
@@ -213,15 +214,35 @@ export default function CreatorDashboardPage() {
     loadWalletCreator();
   }, [publicKey, getCreatorPda, fetchCreatorAccount, refreshDashboardTips]);
 
-  // Real-time listener + cross-device Devnet polling for incoming tips
+  // Real-time Supabase WebSocket + cross-tab listener + fallback polling
   useEffect(() => {
     if (!username) return;
     const handleSync = () => refreshDashboardTips(username);
     window.addEventListener("storage", handleSync);
     window.addEventListener("solstream_new_tip", handleSync as any);
-    const poll = setInterval(handleSync, 4000);
+
+    const sb = getSupabaseClient();
+    let channel: any = null;
+    if (sb) {
+      channel = sb
+        .channel(`dashboard-tips-${username}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "tips",
+            filter: `username=eq.${username}`,
+          },
+          () => handleSync()
+        )
+        .subscribe();
+    }
+
+    const poll = setInterval(handleSync, 8000);
     return () => {
       clearInterval(poll);
+      if (sb && channel) sb.removeChannel(channel);
       window.removeEventListener("storage", handleSync);
       window.removeEventListener("solstream_new_tip", handleSync as any);
     };
@@ -321,6 +342,11 @@ export default function CreatorDashboardPage() {
         goalCurrentLamports: 0,
         createdAt: Date.now(),
       });
+      await fetch("/api/creators/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+      }).catch(() => {});
       setStatusMessage("✅ Goal updated on-chain!");
     } catch (err: any) {
       setStatusMessage(`❌ Error: ${err?.message || "Failed to update goal."}`);
@@ -342,9 +368,14 @@ export default function CreatorDashboardPage() {
         createdAt: Date.now(),
       });
     }
-    if (!connected || !isInitialized) return;
+    if (!connected || !isInitialized || !publicKey) return;
     try {
       await updateVoice(voiceId);
+      await fetch("/api/creators/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+      }).catch(() => {});
       setStatusMessage("✅ Voice persona updated on-chain!");
     } catch (e) {
       console.log("Voice updated locally:", e);

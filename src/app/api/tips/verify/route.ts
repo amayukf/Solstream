@@ -4,6 +4,11 @@ import {
   pushVerifiedTipToMemory,
   fetchOnChainCreatorByUsername,
 } from "@/lib/solanaServer";
+import {
+  getCreatorFromDb,
+  upsertCreatorInDb,
+  insertTipInDb,
+} from "@/lib/supabaseDb";
 
 const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Adam
 
@@ -21,7 +26,8 @@ async function generateElevenLabsDataUrl(
   if (!apiKey) return null;
 
   try {
-    const safeVoice = voiceId && voiceId.length >= 10 ? voiceId : DEFAULT_VOICE_ID;
+    const safeVoice =
+      voiceId && voiceId.length >= 10 ? voiceId : DEFAULT_VOICE_ID;
     const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
       safeVoice
     )}?optimize_streaming_latency=4&output_format=mp3_44100_128`;
@@ -84,9 +90,16 @@ export async function POST(req: Request) {
       );
     }
 
-    // 2. Ensure the tip recipient matches this creator's on-chain authority
-    const creator = await fetchOnChainCreatorByUsername(username);
-    if (creator && creator.authority !== tip.creator) {
+    // 2. Resolve creator from Supabase or Solana Devnet and lock recipient authority
+    let dbCreator = await getCreatorFromDb(username);
+    if (!dbCreator) {
+      const chainCreator = await fetchOnChainCreatorByUsername(username);
+      if (chainCreator) {
+        dbCreator = await upsertCreatorInDb(chainCreator);
+      }
+    }
+
+    if (dbCreator && dbCreator.authority !== tip.creator) {
       return NextResponse.json(
         { error: "Tip recipient does not match creator authority" },
         { status: 400 }
@@ -98,7 +111,10 @@ export async function POST(req: Request) {
     const cleanMsg = sanitizeForTts(tip.message || "");
     const speechScript = `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`;
 
-    const voiceId = creator?.voiceId || DEFAULT_VOICE_ID;
+    const voiceId = dbCreator?.voiceId || DEFAULT_VOICE_ID;
+    const ttsEngine = process.env.ELEVENLABS_API_KEY
+      ? "elevenlabs"
+      : "browser-speech";
     const audioDataUrl = await generateElevenLabsDataUrl(voiceId, speechScript);
 
     const verifiedTip = {
@@ -106,11 +122,25 @@ export async function POST(req: Request) {
       audioDataUrl,
     };
 
+    // 4. Persist verified tip into Supabase Postgres (triggers Supabase Realtime postgres_changes)
+    let savedToSupabase = false;
+    if (dbCreator?.id) {
+      const dbResult = await insertTipInDb(
+        dbCreator.id,
+        username,
+        verifiedTip,
+        audioDataUrl ? "elevenlabs" : "browser-speech"
+      );
+      savedToSupabase = dbResult.inserted || true;
+    }
+
+    // 5. Also push to local SSE memory stream for instant local OBS notification
     pushVerifiedTipToMemory(username, verifiedTip);
 
     return NextResponse.json({
       verified: true,
-      ttsEngine: audioDataUrl ? "elevenlabs" : "browser-speech",
+      savedToSupabase,
+      ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
       tip: verifiedTip,
     });
   } catch (err: any) {

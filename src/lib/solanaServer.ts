@@ -315,6 +315,24 @@ export async function fetchOnChainCreatorByUsername(
   return all.find((c) => c.username === target) || null;
 }
 
+export async function fetchOnChainCreatorByWallet(
+  walletAddress: string
+): Promise<OnChainCreator | null> {
+  const auth = new PublicKey(walletAddress);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("creator"), auth.toBuffer()],
+    PROGRAM_ID
+  );
+  const info = await rpcCall("getAccountInfo", [
+    pda.toBase58(),
+    { encoding: "base64", commitment: "confirmed" },
+  ]);
+  const b64 = info?.value?.data?.[0];
+  if (!b64) return null;
+  const buf = Buffer.from(b64, "base64");
+  return decodeCreatorAccountBuffer(buf, pda.toBase58());
+}
+
 export async function fetchVerifiedTransactionTip(
   signature: string
 ): Promise<OnChainTip | null> {

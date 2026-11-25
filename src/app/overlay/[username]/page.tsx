@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getStoredTips, getStoredCreator } from "@/lib/storage";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
 interface AlertItem {
   id: string;
@@ -245,6 +246,62 @@ export default function ObsOverlayPage({
       setSseConnected(false);
     };
   }, [username, enqueueIncomingTip, toAlertItem]);
+
+  // 1b. Supabase Realtime WebSocket subscription (works across distributed servers / OBS)
+  useEffect(() => {
+    const sb = getSupabaseClient();
+    if (!sb) return;
+
+    const channel = sb
+      .channel(`overlay-realtime-${username}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "tips",
+          filter: `username=eq.${username}`,
+        },
+        (payload) => {
+          const row: any = payload.new;
+          if (!row?.signature) return;
+          enqueueIncomingTip({
+            signature: row.signature,
+            donor: row.donor_wallet,
+            displayName: row.display_name,
+            amountLamports: Number(row.amount_lamports) || 0,
+            tier: Number(row.tier) || 0,
+            message: row.message || "",
+            timestamp: new Date(row.created_at).getTime(),
+            audioDataUrl: row.audio_url || null,
+          });
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "creators",
+          filter: `username=eq.${username}`,
+        },
+        (payload) => {
+          const c: any = payload.new;
+          if (!c) return;
+          setGoal({
+            title: c.goal_title || "Stream Goal",
+            currentSol: (Number(c.goal_current_lamports) || 0) / 1_000_000_000,
+            targetSol:
+              (Number(c.goal_target_lamports) || 1_000_000_000) / 1_000_000_000,
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      sb.removeChannel(channel);
+    };
+  }, [username, enqueueIncomingTip]);
 
   // 2. Local Instant Transport: BroadcastChannel + storage events for 0ms same-browser responsiveness
   useEffect(() => {
