@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { SolanaMarketBoard } from "@/components/SolanaMarketBoard";
+import { GiftIcon } from "@/components/tipping/GiftIcon";
 import { getActiveHandle } from "@/lib/storage";
 import {
   ArrowDown,
@@ -29,9 +30,9 @@ const WalletMultiButton = dynamic(
 );
 
 const PREVIEW_TIERS = [
-  { id: "coffee", label: "Coffee", emoji: "☕", sol: 0.005 },
-  { id: "fire", label: "Fire", emoji: "🔥", sol: 0.025 },
-  { id: "diamond", label: "Diamond", emoji: "💎", sol: 0.05 },
+  { id: "coffee", tierId: 0, label: "Coffee", sol: 0.005 },
+  { id: "fire", tierId: 2, label: "Fire", sol: 0.025 },
+  { id: "diamond", tierId: 3, label: "Diamond", sol: 0.05 },
 ];
 
 interface CreatorDirectoryItem {
@@ -384,13 +385,14 @@ export default function HomePage() {
                       key={tier.id}
                       type="button"
                       onClick={() => setPreviewTier(tier)}
-                      className={`p-2 sm:p-2.5 rounded-xl text-center text-[11px] sm:text-xs whitespace-nowrap transition-all ${
+                      className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center gap-1.5 text-[11px] sm:text-xs whitespace-nowrap transition-all ${
                         isActive
                           ? "bg-[#201738] border-2 border-[#9945FF] font-bold text-white shadow-lg shadow-[#9945FF]/20"
                           : "bg-black/40 border border-white/5 text-zinc-400 hover:border-white/15 hover:text-zinc-200"
                       }`}
                     >
-                      {tier.emoji} {tier.label}
+                      <GiftIcon tier={tier.tierId} size="sm" withBadge={false} />
+                      <span>{tier.label}</span>
                     </button>
                   );
                 })}
@@ -411,6 +413,9 @@ export default function HomePage() {
                   </span>
                 )}
               </Link>
+              <div className="mt-2.5 text-center text-[11px] text-zinc-500">
+                Or open creator page to enter any custom SOL amount
+              </div>
             </div>
 
             {/* Connecting Arrow */}
@@ -421,7 +426,7 @@ export default function HomePage() {
             {/* Bottom Card: Real Latest On-Chain OBS Alert */}
             <div className="w-full max-w-md rounded-2xl bg-[#13141F] border-2 border-[#9945FF]/70 p-5 shadow-2xl shadow-[#9945FF]/10 relative">
               <div className="flex items-start gap-3 mb-3">
-                <span className="text-2xl">{previewTier.emoji}</span>
+                <GiftIcon tier={previewTier.tierId} size="md" />
                 <div className="min-w-0 flex-1">
                   <div className="font-display text-sm font-bold text-white truncate">
                     {latestRealTip

@@ -1,11 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { GIFT_TIERS, GiftTier } from "@/lib/constants";
+import {
+  GIFT_TIERS,
+  GiftTier,
+  getTierForAmountSol,
+} from "@/lib/constants";
 import { MicroTierSelector } from "@/components/tipping/MicroTierSelector";
-import { AlertCircle, Loader2 } from "lucide-react";
+import { GiftIcon } from "@/components/tipping/GiftIcon";
+import { AlertCircle, Loader2, Sparkles } from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () =>
@@ -35,6 +40,9 @@ const PRESET_MESSAGES = [
   "LFG! 🚀",
 ];
 
+const QUICK_CUSTOM_SOL = [0.002, 0.015, 0.5, 1];
+const QUICK_CUSTOM_USD = [1, 5, 10, 25];
+
 export const TipForm: React.FC<TipFormProps> = ({
   username,
   isCreatorReady,
@@ -45,16 +53,59 @@ export const TipForm: React.FC<TipFormProps> = ({
 }) => {
   const { connected } = useWallet();
   const [selectedGift, setSelectedGift] = useState<GiftTier>(GIFT_TIERS[0]);
+  const [isCustomMode, setIsCustomMode] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [customAmount, setCustomAmount] = useState(
     GIFT_TIERS[0].amountSol.toString()
   );
   const [message, setMessage] = useState("መልካም ስራ! በርታ!");
   const [localError, setLocalError] = useState<string | null>(null);
+  const customInputRef = useRef<HTMLInputElement>(null);
 
   const handleSelectGift = (gift: GiftTier) => {
+    setIsCustomMode(false);
     setSelectedGift(gift);
     setCustomAmount(gift.amountSol.toString());
+  };
+
+  const handleSelectCustom = () => {
+    setIsCustomMode(true);
+    setTimeout(() => {
+      customInputRef.current?.focus();
+      customInputRef.current?.select();
+    }, 30);
+  };
+
+  const handleManualAmountChange = (val: string) => {
+    setCustomAmount(val);
+    const num = parseFloat(val);
+    if (!isNaN(num) && num > 0) {
+      const matched = GIFT_TIERS.find(
+        (g) => Math.abs(g.amountSol - num) < 0.00001
+      );
+      if (matched) {
+        setSelectedGift(matched);
+      } else {
+        setIsCustomMode(true);
+        setSelectedGift(getTierForAmountSol(num));
+      }
+    } else {
+      setIsCustomMode(true);
+    }
+  };
+
+  const applyQuickSol = (sol: number) => {
+    setIsCustomMode(true);
+    setCustomAmount(sol.toString());
+    setSelectedGift(getTierForAmountSol(sol));
+  };
+
+  const applyQuickUsd = (usd: number) => {
+    if (!solUsdPrice || solUsdPrice <= 0) return;
+    const sol = Math.max(0.001, Number((usd / solUsdPrice).toFixed(4)));
+    setIsCustomMode(true);
+    setCustomAmount(sol.toString());
+    setSelectedGift(getTierForAmountSol(sol));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -91,12 +142,21 @@ export const TipForm: React.FC<TipFormProps> = ({
       return;
     }
 
+    const resolvedTier = isCustomMode
+      ? getTierForAmountSol(solVal)
+      : selectedGift;
     const lamports = Math.round(solVal * 1_000_000_000);
-    await onSendTip(lamports, solVal, selectedGift.id, trimmedName, trimmedMsg);
+    await onSendTip(lamports, solVal, resolvedTier.id, trimmedName, trimmedMsg);
   };
 
   const displayError = localError || externalError;
   const parsedAmount = parseFloat(customAmount);
+  const validAmount = !isNaN(parsedAmount) && parsedAmount >= 0.001;
+  const effectiveAlertTier = validAmount
+    ? isCustomMode
+      ? getTierForAmountSol(parsedAmount)
+      : selectedGift
+    : selectedGift;
   const usdSuffix =
     solUsdPrice && !isNaN(parsedAmount) && parsedAmount > 0
       ? `(≈ $${(parsedAmount * solUsdPrice).toFixed(2)}) `
@@ -105,52 +165,108 @@ export const TipForm: React.FC<TipFormProps> = ({
   return (
     <form
       onSubmit={handleSubmit}
-      className="rounded-3xl bg-[#13141F] border border-white/5 p-7 space-y-5"
+      className="rounded-3xl bg-[#13141F] border border-white/5 p-5 sm:p-7 space-y-5"
     >
-      <h2 className="font-display text-base font-bold text-white">Send a tip</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-display text-base font-bold text-white">
+          Send a tip
+        </h2>
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-mono text-zinc-400">
+          <GiftIcon tier={effectiveAlertTier.id} size="sm" withBadge={false} />
+          <span>{effectiveAlertTier.name} Alert</span>
+        </span>
+      </div>
 
-      {/* 6 Preset Gift Tiers */}
+      {/* 6 Upgraded Preset Gift Tiers + Custom Tip Option */}
       <MicroTierSelector
         selectedTier={selectedGift}
+        isCustomSelected={isCustomMode}
         onSelectTier={handleSelectGift}
+        onSelectCustom={handleSelectCustom}
         solUsdPrice={solUsdPrice}
       />
 
-      {/* Display Name & Custom Amount */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div>
-          <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
-            Display name (optional)
-          </label>
-          <input
-            type="text"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your display name or handle"
-            maxLength={32}
-            className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
-          />
+      {/* Quick Manual SOL & USD Presets (always easy to tap, highlighted in Custom mode) */}
+      <div
+        className={`rounded-2xl p-3.5 sm:p-4 border transition-colors space-y-3 ${
+          isCustomMode
+            ? "bg-[#0D111C] border-[#14F195]/40"
+            : "bg-[#090A0F]/80 border-white/5"
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold text-zinc-300 flex items-center gap-1.5">
+            <Sparkles className="w-3.5 h-3.5 text-[#14F195]" />
+            <span>Write custom amount or pick a quick preset</span>
+          </span>
+          {solUsdPrice && !isNaN(parsedAmount) && parsedAmount > 0 && (
+            <span className="text-[11px] font-mono text-[#14F195]">
+              ≈ ${(parsedAmount * solUsdPrice).toFixed(2)} USD
+            </span>
+          )}
         </div>
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <label className="text-[11px] text-zinc-400 font-medium">
-              Custom amount (SOL)
-            </label>
-            {solUsdPrice && !isNaN(parsedAmount) && parsedAmount > 0 && (
-              <span className="text-[11px] font-mono text-[#14F195]">
-                ≈ ${(parsedAmount * solUsdPrice).toFixed(2)} USD
-              </span>
-            )}
-          </div>
+
+        {/* Manual SOL Input with inline unit & quick clear */}
+        <div className="flex items-center bg-[#090A0F] border border-white/15 focus-within:border-[#14F195] rounded-xl px-3.5 py-2.5 transition-colors">
           <input
+            ref={customInputRef}
             type="number"
             step="0.001"
             min="0.001"
             value={customAmount}
-            onChange={(e) => setCustomAmount(e.target.value)}
-            className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white font-mono tabular-nums focus:outline-none focus:border-[#9945FF]"
+            onChange={(e) => handleManualAmountChange(e.target.value)}
+            placeholder="0.050"
+            className="w-full min-w-0 bg-transparent text-sm sm:text-base text-white font-mono font-bold tabular-nums focus:outline-none"
           />
+          <span className="ml-2 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[11px] font-mono font-bold text-[#14F195] select-none flex-shrink-0">
+            SOL
+          </span>
         </div>
+
+        {/* Quick SOL & Live USD Pills */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {QUICK_CUSTOM_SOL.map((sol) => (
+            <button
+              key={`sol-${sol}`}
+              type="button"
+              onClick={() => applyQuickSol(sol)}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition-colors ${
+                Number(customAmount) === sol
+                  ? "bg-[#9945FF]/25 border-[#9945FF] text-white"
+                  : "bg-[#13141F] border-white/10 text-zinc-300 hover:border-white/25 hover:text-white"
+              }`}
+            >
+              {sol} SOL
+            </button>
+          ))}
+
+          {solUsdPrice &&
+            QUICK_CUSTOM_USD.map((usd) => (
+              <button
+                key={`usd-${usd}`}
+                type="button"
+                onClick={() => applyQuickUsd(usd)}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold bg-[#13141F] border border-[#14F195]/25 text-[#14F195] hover:bg-[#14F195]/15 transition-colors"
+              >
+                ${usd}
+              </button>
+            ))}
+        </div>
+      </div>
+
+      {/* Display Name */}
+      <div>
+        <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
+          Display name (optional)
+        </label>
+        <input
+          type="text"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Your display name or handle"
+          maxLength={32}
+          className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
+        />
       </div>
 
       {/* Message Field */}
@@ -203,7 +319,7 @@ export const TipForm: React.FC<TipFormProps> = ({
         ) : (
           <button
             type="submit"
-            disabled={isLoading || !isCreatorReady}
+            disabled={isLoading || !isCreatorReady || !validAmount}
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-[#9945FF] to-[#14F195] text-[#090A0F] font-black text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center justify-center gap-2 hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isLoading ? (
@@ -213,14 +329,14 @@ export const TipForm: React.FC<TipFormProps> = ({
               </>
             ) : (
               <span>
-                Send {customAmount} SOL {usdSuffix}with Phantom
+                Send {customAmount || "0"} SOL {usdSuffix}with Wallet
               </span>
             )}
           </button>
         )}
 
         <div className="text-center text-[10px] text-zinc-500 mt-2.5">
-          Direct on-chain CPI transfer · Zero platform fees
+          Direct on-chain CPI transfer · Zero platform fees · Min 0.001 SOL
         </div>
       </div>
     </form>

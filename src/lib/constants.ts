@@ -79,6 +79,18 @@ export const MAX_DISPLAY_NAME_CHARS = 32;
 export const MAX_MESSAGE_CHARS = 100;
 export const MIN_TIP_LAMPORTS = 1_000_000; // 0.001 SOL
 
+/**
+ * Maps any manual/custom SOL amount to one of the valid on-chain tiers (0..=5)
+ * so custom amounts work seamlessly with the deployed Anchor program constraint.
+ */
+export function getTierForAmountSol(amountSol: number): GiftTier {
+  const ordered = [...GIFT_TIERS].sort((a, b) => b.amountSol - a.amountSol);
+  for (const tier of ordered) {
+    if (amountSol >= tier.amountSol) return tier;
+  }
+  return GIFT_TIERS[0];
+}
+
 export interface VoiceOption {
   id: string;
   name: string;

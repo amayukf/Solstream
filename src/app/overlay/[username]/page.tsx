@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { getStoredTips, getStoredCreator } from "@/lib/storage";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import { GiftIcon } from "@/components/tipping/GiftIcon";
 
 interface AlertItem {
   id: string;
@@ -470,15 +471,7 @@ export default function ObsOverlayPage({
                 {/* Top Header: Tipper Name, Wallet, Tier & Amount */}
                 <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
                   <div className="flex items-center gap-4 min-w-0">
-                    <div
-                      className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0 border"
-                      style={{
-                        backgroundColor: `${activeStyle.border}18`,
-                        borderColor: `${activeStyle.border}50`,
-                      }}
-                    >
-                      {activeStyle.emoji}
-                    </div>
+                    <GiftIcon tier={currentAlert.tier} size="lg" />
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -585,9 +578,7 @@ export default function ObsOverlayPage({
         {/* Real-Time Latest Tipper HUD (Only renders when real tips exist on-chain) */}
         {latestTip && (
           <div className="rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm">
-            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
-              {(TIER_STYLES[latestTip.tier] || TIER_STYLES[0]).emoji}
-            </div>
+            <GiftIcon tier={latestTip.tier} size="md" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
                 <span>Latest Supporter</span>
