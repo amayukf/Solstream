@@ -1,6 +1,32 @@
 import type { Metadata } from "next";
+import {
+  Plus_Jakarta_Sans,
+  Space_Grotesk,
+  JetBrains_Mono,
+} from "next/font/google";
 import { SolanaWalletProvider } from "@/components/SolanaWalletProvider";
 import "./globals.css";
+
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700", "800"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "SolStream | Real-Time Web3 Stream Monetization on Solana",
@@ -14,8 +40,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
-      <body className="bg-obsidian text-white min-h-screen antialiased selection:bg-solana-purple selection:text-white">
+    <html
+      lang="en"
+      className={`dark ${plusJakarta.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
+    >
+      <body className="bg-[#0B0C10] text-white min-h-screen font-sans antialiased selection:bg-solana-purple selection:text-white">
         <SolanaWalletProvider>{children}</SolanaWalletProvider>
       </body>
     </html>

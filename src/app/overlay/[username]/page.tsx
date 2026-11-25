@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { getStoredTips, getStoredCreator, TipRecord } from "@/lib/storage";
+import { getStoredTips, getStoredCreator } from "@/lib/storage";
 
 interface AlertItem {
   id: string;
   signature: string;
   displayName: string;
   amountSol: number;
+  tier: number;
   tierName: string;
   message: string;
 }
@@ -15,7 +16,39 @@ interface AlertItem {
 const TIER_NAMES = ["Coffee", "Rose", "Fire", "Diamond", "Rocket", "Crown"];
 const TIER_EMOJIS = ["☕", "🌹", "🔥", "💎", "🚀", "👑"];
 
-export default function ObsOverlayPage({ params }: { params: { username: string } }) {
+function playAlertChime() {
+  try {
+    const AudioCtx =
+      window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const now = ctx.currentTime;
+
+    // Pleasant two-tone futuristic synth chime (E5 -> B5)
+    const notes = [659.25, 987.77];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + i * 0.12);
+      gain.gain.setValueAtTime(0.001, now + i * 0.12);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.12);
+      osc.stop(now + i * 0.12 + 0.48);
+    });
+  } catch {
+    // Ignore autoplay blocks gracefully
+  }
+}
+
+export default function ObsOverlayPage({
+  params,
+}: {
+  params: { username: string };
+}) {
   const username = params.username.toLowerCase();
 
   const [queue, setQueue] = useState<AlertItem[]>([]);
@@ -32,17 +65,26 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
     targetSol: 1.0,
   });
 
-  // Load creator goal
-  useEffect(() => {
+  const refreshGoal = useCallback(() => {
     const creator = getStoredCreator(username);
+    const tips = getStoredTips(username);
+    const tipsTotalSol =
+      tips.reduce((acc, t) => acc + t.amountLamports, 0) / 1_000_000_000;
+
     if (creator) {
+      const storedCurrent = (creator.goalCurrentLamports || 0) / 1_000_000_000;
       setGoal({
         title: creator.goalTitle || "Stream Goal",
-        currentSol: creator.goalCurrentLamports / 1_000_000_000,
-        targetSol: creator.goalTargetLamports / 1_000_000_000 || 1.0,
+        currentSol: Math.max(storedCurrent, tipsTotalSol),
+        targetSol: (creator.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
       });
     }
   }, [username]);
+
+  // Load creator goal
+  useEffect(() => {
+    refreshGoal();
+  }, [refreshGoal]);
 
   // Check for new tips from localStorage
   const checkTips = useCallback(() => {
@@ -65,13 +107,15 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
         signature: t.signature,
         displayName: t.displayName,
         amountSol: t.amountLamports / 1_000_000_000,
+        tier: typeof t.tier === "number" ? t.tier : 3,
         tierName: TIER_NAMES[t.tier] || "Tip",
         message: t.message,
       }));
 
       setQueue((prev) => [...prev, ...newAlerts]);
+      refreshGoal();
     }
-  }, [username]);
+  }, [username, refreshGoal]);
 
   useEffect(() => {
     checkTips();
@@ -82,6 +126,7 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
     // Also listen to storage & custom event
     const handleStorage = (e: StorageEvent) => {
       if (e.key === `solstream_tips_${username}`) checkTips();
+      if (e.key === "solstream_creators") refreshGoal();
     };
     const handleCustom = (e: any) => {
       if (e.detail?.username === username) checkTips();
@@ -95,7 +140,7 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("solstream_new_tip", handleCustom);
     };
-  }, [checkTips, username]);
+  }, [checkTips, refreshGoal, username]);
 
   // FIFO Alert Queue Processor
   useEffect(() => {
@@ -104,18 +149,21 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
       setQueue((prev) => prev.slice(1));
       setCurrentAlert(nextAlert);
 
-      // Web Speech API / TTS
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        const text = `${nextAlert.displayName} tipped ${nextAlert.amountSol} SOL. ${nextAlert.message}`;
-        const utter = new SpeechSynthesisUtterance(text);
-        window.speechSynthesis.speak(utter);
-      }
+      // Play chime + TTS speech
+      playAlertChime();
 
-      // Update local goal
-      setGoal((prev) => ({
-        ...prev,
-        currentSol: prev.currentSol + nextAlert.amountSol,
-      }));
+      if (typeof window !== "undefined" && window.speechSynthesis) {
+        try {
+          window.speechSynthesis.cancel();
+          const text = `${nextAlert.displayName} tipped ${nextAlert.amountSol} SOL. ${nextAlert.message}`;
+          const utter = new SpeechSynthesisUtterance(text);
+          utter.rate = 1.0;
+          utter.pitch = 1.0;
+          window.speechSynthesis.speak(utter);
+        } catch {
+          // Graceful fallback if speech synthesis is unavailable
+        }
+      }
 
       // Auto-dismiss alert after 7 seconds
       const dismissTimer = setTimeout(() => {
@@ -126,6 +174,19 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
     }
   }, [currentAlert, queue]);
 
+  const triggerPreviewAlert = () => {
+    const sample: AlertItem = {
+      id: `preview-${Date.now()}`,
+      signature: "preview",
+      displayName: "Test Viewer",
+      amountSol: 0.05,
+      tier: 3,
+      tierName: "Diamond",
+      message: "Audio & OBS overlay test looks crisp!",
+    };
+    setQueue((prev) => [...prev, sample]);
+  };
+
   const percentage = Math.min(
     Math.round((goal.currentSol / (goal.targetSol || 1)) * 100),
     100
@@ -133,33 +194,45 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
 
   return (
     <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-8">
-      {/* Top Helper Pills */}
-      <div className="flex items-center justify-between text-xs opacity-40 hover:opacity-100 transition-opacity">
+      {/* Top Helper Pills (Subtle opacity for clean OBS capture, bright on hover) */}
+      <div className="flex items-center justify-between text-xs opacity-35 hover:opacity-100 transition-opacity">
         <div className="px-3.5 py-1.5 rounded-full bg-black/70 border border-white/10 text-zinc-400 font-medium">
-          OBS Browser Source: @{username} (Transparent Canvas)
+          OBS Browser Source: <span className="font-mono text-white">@{username}</span> (Transparent Canvas)
         </div>
 
-        <div className="px-3.5 py-1.5 rounded-full bg-[#9945FF] text-white font-medium text-[11px] shadow-lg shadow-[#9945FF]/20">
-          Alert shows 7 s, then fades. Queued tips play one at a time.
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={triggerPreviewAlert}
+            className="px-3.5 py-1.5 rounded-full bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-bold text-[11px] shadow-lg transition-colors cursor-pointer"
+          >
+            Test Alert &amp; Sound
+          </button>
+          <div className="px-3.5 py-1.5 rounded-full bg-[#9945FF] text-white font-medium text-[11px] shadow-lg shadow-[#9945FF]/20">
+            7s auto-dismiss · FIFO queue
+          </div>
         </div>
       </div>
 
       {/* CENTER REAL-TIME ALERT POPUP */}
       <div className="flex-1 flex items-center justify-center">
         {currentAlert && (
-          <div className="relative animate-bounce-short">
+          <div className="relative animate-bounce-short w-full max-w-xl">
             {/* Ambient neon backdrop glow */}
             <div className="absolute inset-0 bg-gradient-to-r from-[#9945FF]/40 to-[#14F195]/40 blur-2xl rounded-3xl" />
 
-            <div className="relative rounded-3xl bg-[#13141F]/95 border-2 border-[#14F195]/70 p-6 md:p-8 max-w-xl w-full shadow-2xl backdrop-blur-xl">
+            <div className="relative rounded-3xl bg-[#13141F]/95 border-2 border-[#14F195]/70 p-6 md:p-8 w-full shadow-2xl backdrop-blur-xl">
               <div className="flex items-center gap-4 mb-3">
                 <div className="w-12 h-12 rounded-2xl bg-[#00F0FF]/15 border border-[#00F0FF]/30 flex items-center justify-center text-2xl shadow-lg shadow-[#00F0FF]/20">
-                  💎
+                  {TIER_EMOJIS[currentAlert.tier] || "💎"}
                 </div>
 
                 <div>
-                  <h2 className="text-2xl font-black text-white tracking-tight">
-                    {currentAlert.displayName} tipped {currentAlert.amountSol} SOL
+                  <h2 className="font-display text-2xl font-bold text-white tracking-tight">
+                    {currentAlert.displayName} tipped{" "}
+                    <span className="font-mono text-[#14F195]">
+                      {currentAlert.amountSol} SOL
+                    </span>
                   </h2>
                   <div className="text-xs font-bold text-[#14F195] tracking-wide">
                     {currentAlert.tierName} · Verified on Solana
@@ -191,9 +264,9 @@ export default function ObsOverlayPage({ params }: { params: { username: string 
       <div className="flex items-end justify-between w-full">
         <div className="w-full max-w-md rounded-2xl bg-[#13141F]/90 border border-white/10 p-3.5 backdrop-blur-md shadow-2xl">
           <div className="flex items-center justify-between text-xs font-bold mb-2">
-            <span className="text-white">{goal.title}</span>
-            <span className="text-[#14F195] font-mono">
-              {goal.currentSol.toFixed(2)} / {goal.targetSol.toFixed(1)} SOL
+            <span className="font-display text-white">{goal.title}</span>
+            <span className="text-[#14F195] font-mono tabular-nums">
+              {goal.currentSol.toFixed(3)} / {goal.targetSol.toFixed(1)} SOL
             </span>
           </div>
 

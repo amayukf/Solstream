@@ -56,6 +56,18 @@ export default function FanTippingPage({ params }: { params: { username: string 
 
   // Real tips from localStorage
   const [tips, setTips] = useState<TipRecord[]>([]);
+  const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
+
+  // Fetch real SOL/USD price from server market feed
+  useEffect(() => {
+    fetch("/api/prices")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const sol = data?.coins?.find((c: any) => c.symbol === "SOL");
+        if (sol?.priceUsd) setSolUsdPrice(sol.priceUsd);
+      })
+      .catch(() => {});
+  }, []);
 
   // Success modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -213,6 +225,17 @@ export default function FanTippingPage({ params }: { params: { username: string 
       return;
     }
 
+    const trimmedMsg = message.trim() || "መልካም ስራ!";
+    const trimmedName = displayName.trim() || "Anonymous";
+    if (new TextEncoder().encode(trimmedMsg).length > 300) {
+      setError("Message exceeds the 300-byte on-chain UTF-8 limit.");
+      return;
+    }
+    if (new TextEncoder().encode(trimmedName).length > 96) {
+      setError("Display name exceeds the 96-byte on-chain UTF-8 limit.");
+      return;
+    }
+
     setIsLoading(true);
     try {
       const lamports = Math.round(solVal * 1_000_000_000);
@@ -221,8 +244,8 @@ export default function FanTippingPage({ params }: { params: { username: string 
       const { tx } = await sendTip(
         lamports,
         selectedGift.id,
-        displayName.trim() || "Anonymous",
-        message.trim() || "መልካም ስራ!",
+        trimmedName,
+        trimmedMsg,
         creatorAuth
       );
 
@@ -230,10 +253,10 @@ export default function FanTippingPage({ params }: { params: { username: string 
       const newTip: TipRecord = {
         signature: tx,
         donor: publicKey.toBase58(),
-        displayName: displayName.trim() || "Anonymous",
+        displayName: trimmedName,
         amountLamports: lamports,
         tier: selectedGift.id,
-        message: message.trim() || "መልካም ስራ!",
+        message: trimmedMsg,
         timestamp: Date.now(),
       };
 
@@ -408,9 +431,16 @@ export default function FanTippingPage({ params }: { params: { username: string 
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1.5 font-medium">
-                    Custom amount (SOL)
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-[11px] text-zinc-400 font-medium">
+                      Custom amount (SOL)
+                    </label>
+                    {solUsdPrice && !isNaN(parseFloat(customAmount)) && (
+                      <span className="text-[11px] font-mono text-[#14F195]">
+                        ≈ ${(parseFloat(customAmount) * solUsdPrice).toFixed(2)} USD
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="number"
                     step="0.001"
@@ -436,6 +466,23 @@ export default function FanTippingPage({ params }: { params: { username: string 
                   placeholder="መልካም ስራ! በርታ! (supports Amharic & English)"
                   className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:outline-none focus:border-[#9945FF] resize-none"
                 />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[
+                    "መልካም ስራ! በርታ!",
+                    "Keep shining! 🔥",
+                    "Coffee on me ☕",
+                    "LFG! 🚀",
+                  ].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setMessage(preset)}
+                      className="px-2.5 py-1 rounded-full bg-[#090A0F] hover:bg-[#1E1838] border border-white/10 hover:border-[#9945FF]/50 text-[10px] text-zinc-400 hover:text-white transition-colors"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Error banner */}
@@ -465,7 +512,13 @@ export default function FanTippingPage({ params }: { params: { username: string 
                         <span>Sending Tip on Solana Devnet...</span>
                       </>
                     ) : (
-                      <span>Send {customAmount} SOL with Phantom</span>
+                      <span>
+                        Send {customAmount} SOL{" "}
+                        {solUsdPrice && !isNaN(parseFloat(customAmount))
+                          ? `(≈ $${(parseFloat(customAmount) * solUsdPrice).toFixed(2)}) `
+                          : ""}
+                        with Phantom
+                      </span>
                     )}
                   </button>
                 )}
@@ -492,7 +545,10 @@ export default function FanTippingPage({ params }: { params: { username: string 
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {tips.slice(0, 5).map((t, idx) => {
+                  {[...tips]
+                    .sort((a, b) => b.amountLamports - a.amountLamports)
+                    .slice(0, 5)
+                    .map((t, idx) => {
                     const medalBg =
                       idx === 0
                         ? "bg-[#FFD700] text-black"

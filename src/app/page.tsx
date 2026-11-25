@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { SolanaLogo } from "@/components/SolanaLogo";
+import { SolanaMarketBoard } from "@/components/SolanaMarketBoard";
 import { getActiveHandle } from "@/lib/storage";
-import { ArrowDown } from "lucide-react";
+import { ArrowDown, TrendingUp, TrendingDown } from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () =>
@@ -14,14 +15,29 @@ const WalletMultiButton = dynamic(
   { ssr: false }
 );
 
+const PREVIEW_TIERS = [
+  { id: "coffee", label: "Coffee", emoji: "☕", sol: 0.005 },
+  { id: "fire", label: "Fire", emoji: "🔥", sol: 0.025 },
+  { id: "diamond", label: "Diamond", emoji: "💎", sol: 0.05 },
+];
+
 export default function HomePage() {
   const router = useRouter();
   const [handle, setHandle] = useState("");
   const [activeHandle, setActiveHandle] = useState<string | null>(null);
+  const [previewTier, setPreviewTier] = useState(PREVIEW_TIERS[2]);
+  const [solTicker, setSolTicker] = useState<{
+    price: number;
+    chg: number;
+  } | null>(null);
 
   useEffect(() => {
     const stored = getActiveHandle();
     if (stored) setActiveHandle(stored);
+  }, []);
+
+  const handleSolPriceLoaded = useCallback((price: number, chg: number) => {
+    setSolTicker({ price, chg });
   }, []);
 
   const handleClaim = (e: React.FormEvent) => {
@@ -41,25 +57,57 @@ export default function HomePage() {
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-2.5">
             <SolanaLogo className="w-6 h-5" />
-            <span className="text-xl font-bold tracking-tight text-white">
+            <span className="font-display text-xl font-bold tracking-tight text-white">
               SolStream
             </span>
           </Link>
 
           <nav className="hidden md:flex items-center gap-6 text-sm text-zinc-400">
-            <a href="#features" className="hover:text-white transition-colors">
-              Features
+            <a href="#markets" className="hover:text-[#14F195] transition-colors font-medium">
+              Live Markets
             </a>
             <a href="#how-it-works" className="hover:text-white transition-colors">
               How it works
             </a>
-            <Link href={activeHandle ? `/${activeHandle}` : "/claim"} className="hover:text-white transition-colors">
+            {activeHandle && (
+              <Link href="/dashboard" className="hover:text-white transition-colors">
+                Dashboard
+              </Link>
+            )}
+            <Link
+              href={activeHandle ? `/${activeHandle}` : "/claim"}
+              className="hover:text-white transition-colors"
+            >
               {activeHandle ? `@${activeHandle}` : "Explore creators"}
             </Link>
           </nav>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          {solTicker && (
+            <a
+              href="#markets"
+              className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 hover:border-[#14F195]/40 transition-colors text-xs font-mono tabular-nums"
+            >
+              <span className="text-zinc-400 font-semibold">SOL</span>
+              <span className="text-white font-bold">
+                ${solTicker.price.toFixed(2)}
+              </span>
+              <span
+                className={`inline-flex items-center gap-0.5 text-[11px] font-bold ${
+                  solTicker.chg >= 0 ? "text-[#14F195]" : "text-rose-400"
+                }`}
+              >
+                {solTicker.chg >= 0 ? (
+                  <TrendingUp className="w-3 h-3" />
+                ) : (
+                  <TrendingDown className="w-3 h-3" />
+                )}
+                {solTicker.chg >= 0 ? "+" : ""}
+                {solTicker.chg.toFixed(1)}%
+              </span>
+            </a>
+          )}
           <WalletMultiButton className="!bg-[#1D1B2E] hover:!bg-[#282542] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
         </div>
       </header>
@@ -70,12 +118,23 @@ export default function HomePage() {
           {/* Left Column */}
           <div className="lg:col-span-7 space-y-6">
             {/* Live badge */}
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#14F195]/10 border border-[#14F195]/30 text-xs font-semibold text-[#14F195]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#14F195] animate-ping" />
-              <span>Live on Solana devnet</span>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#14F195]/10 border border-[#14F195]/30 text-xs font-semibold text-[#14F195]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#14F195] animate-ping" />
+                <span>Live on Solana devnet</span>
+              </div>
+
+              {solTicker && (
+                <a
+                  href="#markets"
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono tabular-nums text-zinc-300 hover:border-[#9945FF]/50 transition-colors"
+                >
+                  <span>1 SOL = ${solTicker.price.toFixed(2)}</span>
+                </a>
+              )}
             </div>
 
-            <h1 className="text-4xl sm:text-6xl font-black tracking-tight text-white leading-[1.1]">
+            <h1 className="font-display text-4xl sm:text-6xl font-bold tracking-tight text-white leading-[1.08]">
               Tips that land in your wallet and on your stream.
             </h1>
 
@@ -115,7 +174,7 @@ export default function HomePage() {
                 Every tip verified on-chain
               </span>
               <span className="px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/5 text-xs text-zinc-400 font-medium">
-                ElevenLabs voice alerts
+                AI voice stream alerts
               </span>
             </div>
           </div>
@@ -126,30 +185,46 @@ export default function HomePage() {
             <div className="w-full max-w-md rounded-2xl bg-[#13141F] border border-white/10 p-5 shadow-2xl">
               <div className="flex items-center justify-between text-xs mb-4">
                 <span className="text-zinc-300 font-semibold">
-                  Fan page · <span className="text-white">@{activeHandle || "yourname"}</span>
+                  Fan page ·{" "}
+                  <span className="text-white font-mono">
+                    @{activeHandle || "yourhandle"}
+                  </span>
                 </span>
                 <span className="text-zinc-500 font-mono text-[11px]">
-                  Phantom connected
+                  Live flow preview
                 </span>
               </div>
 
               <div className="grid grid-cols-3 gap-2.5 mb-4">
-                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 text-center text-xs text-zinc-400">
-                  Coffee
-                </div>
-                <div className="p-2.5 rounded-xl bg-black/40 border border-white/5 text-center text-xs text-zinc-400">
-                  Fire
-                </div>
-                <div className="p-2.5 rounded-xl bg-[#201738] border-2 border-[#9945FF] text-center text-xs font-bold text-white shadow-lg shadow-[#9945FF]/20">
-                  Diamond
-                </div>
+                {PREVIEW_TIERS.map((tier) => {
+                  const isActive = previewTier.id === tier.id;
+                  return (
+                    <button
+                      key={tier.id}
+                      type="button"
+                      onClick={() => setPreviewTier(tier)}
+                      className={`p-2.5 rounded-xl text-center text-xs transition-all ${
+                        isActive
+                          ? "bg-[#201738] border-2 border-[#9945FF] font-bold text-white shadow-lg shadow-[#9945FF]/20"
+                          : "bg-black/40 border border-white/5 text-zinc-400 hover:border-white/15 hover:text-zinc-200"
+                      }`}
+                    >
+                      {tier.emoji} {tier.label}
+                    </button>
+                  );
+                })}
               </div>
 
               <Link
                 href={activeHandle ? `/${activeHandle}` : "/claim"}
-                className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm flex items-center justify-center transition-all shadow-lg shadow-[#14F195]/20"
+                className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#14F195]/20"
               >
-                Send 0.05 SOL
+                <span>Send {previewTier.sol} SOL</span>
+                {solTicker && (
+                  <span className="text-xs font-mono opacity-75">
+                    (≈ ${(previewTier.sol * solTicker.price).toFixed(2)})
+                  </span>
+                )}
               </Link>
             </div>
 
@@ -161,19 +236,19 @@ export default function HomePage() {
             {/* Bottom Card: Alert Popup Preview */}
             <div className="w-full max-w-md rounded-2xl bg-[#13141F] border-2 border-[#9945FF]/70 p-5 shadow-2xl shadow-[#9945FF]/10 relative">
               <div className="flex items-start gap-3 mb-3">
-                <span className="text-2xl">💎</span>
+                <span className="text-2xl">{previewTier.emoji}</span>
                 <div>
-                  <div className="text-sm font-extrabold text-white">
-                    Abebe_DC tipped 0.05 SOL
+                  <div className="font-display text-sm font-bold text-white">
+                    Viewer tipped {previewTier.sol} SOL
                   </div>
                   <div className="text-[11px] text-[#14F195] font-semibold">
-                    Verified on Solana
+                    Verified on Solana Devnet
                   </div>
                 </div>
               </div>
 
               <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs text-zinc-200 italic mb-3">
-                &ldquo;Keep inspiring Addis!&rdquo;
+                &ldquo;መልካም ስራ! Keep streaming live!&rdquo;
               </div>
 
               <div className="flex items-center gap-2 text-xs text-zinc-400">
@@ -190,37 +265,77 @@ export default function HomePage() {
         </div>
 
         {/* Bottom 3 Steps */}
-        <div id="how-it-works" className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-20">
-          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 space-y-3">
-            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-black text-xs">
+        <div
+          id="how-it-works"
+          className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-20"
+        >
+          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 hover:border-[#9945FF]/30 transition-colors space-y-3">
+            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-mono font-bold text-xs">
               1
             </div>
-            <h3 className="text-base font-bold text-white">Claim your handle</h3>
+            <h3 className="font-display text-base font-bold text-white">
+              Claim your handle
+            </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
               Connect Phantom and create your creator profile on Solana.
             </p>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 space-y-3">
-            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-black text-xs">
+          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 hover:border-[#9945FF]/30 transition-colors space-y-3">
+            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-mono font-bold text-xs">
               2
             </div>
-            <h3 className="text-base font-bold text-white">Add the overlay to OBS</h3>
+            <h3 className="font-display text-base font-bold text-white">
+              Add the overlay to OBS
+            </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
               Paste one Browser Source URL. Pick your alert voice.
             </p>
           </div>
 
-          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 space-y-3">
-            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-black text-xs">
+          <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 hover:border-[#9945FF]/30 transition-colors space-y-3">
+            <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-mono font-bold text-xs">
               3
             </div>
-            <h3 className="text-base font-bold text-white">Share your link</h3>
+            <h3 className="font-display text-base font-bold text-white">
+              Share your link
+            </h3>
             <p className="text-xs text-zinc-400 leading-relaxed">
               Fans tip from anywhere, and every tip links to its on-chain proof.
             </p>
           </div>
         </div>
+
+        {/* LIVE SOLANA & ECOSYSTEM COIN PRICE LIST */}
+        <SolanaMarketBoard onSolPriceLoaded={handleSolPriceLoaded} />
+
+        {/* Clean Hackathon Footer */}
+        <footer className="mt-20 pt-8 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
+          <div className="flex items-center gap-2">
+            <SolanaLogo className="w-4 h-3.5" />
+            <span className="font-display font-semibold text-zinc-300">
+              SolStream
+            </span>
+            <span>· Built for DEV3PACK Solana Hackathon</span>
+          </div>
+
+          <div className="flex items-center gap-5 font-mono text-[11px]">
+            <a
+              href="https://solscan.io/account/BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA?cluster=devnet"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-[#14F195] transition-colors"
+            >
+              Contract: BN6Z...GKuA ↗
+            </a>
+            <Link href="/dashboard" className="hover:text-white transition-colors">
+              Studio
+            </Link>
+            <Link href="/claim" className="hover:text-white transition-colors">
+              Claim Handle
+            </Link>
+          </div>
+        </footer>
       </main>
     </div>
   );

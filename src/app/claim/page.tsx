@@ -35,6 +35,8 @@ function ClaimHandleForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [existingOnChainHandle, setExistingOnChainHandle] = useState<string | null>(null);
+
   useEffect(() => {
     const queryHandle = searchParams?.get("handle");
     if (queryHandle) {
@@ -45,19 +47,40 @@ function ClaimHandleForm() {
   // Check if wallet already has an on-chain account
   useEffect(() => {
     async function checkExisting() {
-      if (!publicKey) return;
+      if (!publicKey) {
+        setExistingOnChainHandle(null);
+        return;
+      }
       try {
         const pda = getCreatorPda(publicKey);
         const acc = await fetchCreatorAccount(pda);
-        if (acc) {
-          // Already initialized on-chain!
+        if (acc && acc.username) {
+          const targetRaw = acc.goalTargetLamports ?? acc.goal_target_lamports;
+          const currentRaw = acc.goalCurrentLamports ?? acc.goal_current_lamports;
+          const targetLamports =
+            typeof targetRaw === "number"
+              ? targetRaw
+              : targetRaw?.toNumber
+              ? targetRaw.toNumber()
+              : 3_000_000_000;
+          const currentLamports =
+            typeof currentRaw === "number"
+              ? currentRaw
+              : currentRaw?.toNumber
+              ? currentRaw.toNumber()
+              : 0;
+
+          const uname = acc.username.toLowerCase();
+          setExistingOnChainHandle(uname);
+          setHandle((prev) => prev || uname);
+
           saveStoredCreator({
-            username: acc.username,
+            username: uname,
             authority: publicKey.toBase58(),
             voiceId: acc.voiceId || acc.voice_id || VOICES[0].id,
             goalTitle: acc.goalTitle || acc.goal_title || "Stream Goal",
-            goalTargetLamports: acc.goalTargetLamports?.toNumber() || 3_000_000_000,
-            goalCurrentLamports: acc.goalCurrentLamports?.toNumber() || 0,
+            goalTargetLamports: targetLamports,
+            goalCurrentLamports: currentLamports,
             createdAt: Date.now(),
           });
         }
@@ -74,12 +97,16 @@ function ClaimHandleForm() {
       setError("Please connect your Phantom wallet first.");
       return;
     }
+    if (!handle.trim()) {
+      setError("Please enter a valid handle.");
+      return;
+    }
     setError(null);
     setIsLoading(true);
 
     try {
       const lamports = Math.round(parseFloat(goalTarget) * 1_000_000_000);
-      
+
       // Call Anchor on-chain initialize_creator
       await initializeCreator(handle, selectedVoice, lamports, goalTitle);
 
@@ -98,10 +125,15 @@ function ClaimHandleForm() {
       router.push("/dashboard");
     } catch (err: any) {
       console.error(err);
-      if (err?.message?.includes("0x0")) {
+      const errMsg = err?.message || String(err);
+      if (
+        errMsg.includes("0x0") ||
+        errMsg.includes("already in use") ||
+        errMsg.includes("AccountAlreadyInUse")
+      ) {
         // Already initialized on-chain
         saveStoredCreator({
-          username: handle,
+          username: existingOnChainHandle || handle,
           authority: publicKey.toBase58(),
           voiceId: selectedVoice,
           goalTitle,
@@ -111,7 +143,7 @@ function ClaimHandleForm() {
         });
         router.push("/dashboard");
       } else {
-        setError(err?.message || "Failed to initialize creator profile on Solana Devnet.");
+        setError(errMsg || "Failed to initialize creator profile on Solana Devnet.");
       }
     } finally {
       setIsLoading(false);
@@ -169,7 +201,21 @@ function ClaimHandleForm() {
       </div>
 
       {/* Right Column: Setup Form */}
-      <div className="lg:col-span-7">
+      <div className="lg:col-span-7 space-y-4">
+        {existingOnChainHandle && (
+          <div className="p-4 rounded-2xl bg-[#14F195]/10 border border-[#14F195]/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="text-xs text-[#14F195]">
+              <strong>Profile Already Active:</strong> This wallet already owns{" "}
+              <span className="font-mono font-bold">@{existingOnChainHandle}</span> on Devnet.
+            </div>
+            <Link
+              href="/dashboard"
+              className="px-4 py-2 rounded-xl bg-[#14F195] text-[#090A0F] font-bold text-xs text-center flex-shrink-0"
+            >
+              Open Creator Studio →
+            </Link>
+          </div>
+        )}
         <form
           onSubmit={handleCreate}
           className="rounded-3xl bg-[#13141F] border border-white/10 p-7 md:p-9 space-y-6 shadow-2xl"

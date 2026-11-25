@@ -183,6 +183,18 @@ export default function CreatorDashboardPage() {
     loadWalletCreator();
   }, [publicKey, getCreatorPda, fetchCreatorAccount, refreshDashboardTips]);
 
+  // Real-time listener for incoming tips from other browser tabs
+  useEffect(() => {
+    if (!username) return;
+    const handleSync = () => refreshDashboardTips(username);
+    window.addEventListener("storage", handleSync);
+    window.addEventListener("solstream_new_tip", handleSync as any);
+    return () => {
+      window.removeEventListener("storage", handleSync);
+      window.removeEventListener("solstream_new_tip", handleSync as any);
+    };
+  }, [username, refreshDashboardTips]);
+
   const shortWallet = publicKey
     ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
     : null;
@@ -247,13 +259,23 @@ export default function CreatorDashboardPage() {
 
   const handleUpdateGoal = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!connected) return;
+    if (!connected || !publicKey || !username) return;
     setIsUpdatingGoal(true);
     setStatusMessage(null);
     try {
-      const lamports = Math.round(parseFloat(goalTargetSol) * 1_000_000_000);
+      const targetNum = parseFloat(goalTargetSol) || 1.0;
+      const lamports = Math.round(targetNum * 1_000_000_000);
       await updateGoal(lamports, goalTitle);
       setCurrentGoalSol(0);
+      saveStoredCreator({
+        username,
+        authority: publicKey.toBase58(),
+        voiceId: selectedVoice,
+        goalTitle,
+        goalTargetLamports: lamports,
+        goalCurrentLamports: 0,
+        createdAt: Date.now(),
+      });
       setStatusMessage("✅ Goal updated on-chain!");
     } catch (err: any) {
       setStatusMessage(`❌ Error: ${err?.message || "Failed to update goal."}`);
@@ -264,6 +286,17 @@ export default function CreatorDashboardPage() {
 
   const handleSelectVoice = async (voiceId: string) => {
     setSelectedVoice(voiceId);
+    if (username && publicKey) {
+      saveStoredCreator({
+        username,
+        authority: publicKey.toBase58(),
+        voiceId,
+        goalTitle,
+        goalTargetLamports: Math.round((parseFloat(goalTargetSol) || 3.0) * 1_000_000_000),
+        goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
+        createdAt: Date.now(),
+      });
+    }
     if (!connected || !isInitialized) return;
     try {
       await updateVoice(voiceId);
@@ -273,8 +306,9 @@ export default function CreatorDashboardPage() {
     }
   };
 
+  const effectiveGoalSol = Math.max(currentGoalSol, totalVolumeSol);
   const goalPercentage = Math.min(
-    Math.round((currentGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
+    Math.round((effectiveGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
     100
   );
 
@@ -474,15 +508,18 @@ export default function CreatorDashboardPage() {
                       onChange={(e) => setGoalTitle(e.target.value)}
                       className="flex-1 bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
                     />
-                    <div className="w-24">
+                    <div className="w-28 flex items-center bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 focus-within:border-[#9945FF]">
                       <input
-                        type="text"
-                        value={`${goalTargetSol} SOL`}
-                        onChange={(e) =>
-                          setGoalTargetSol(e.target.value.replace(/[^0-9.]/g, ""))
-                        }
-                        className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white font-mono focus:outline-none focus:border-[#9945FF]"
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={goalTargetSol}
+                        onChange={(e) => setGoalTargetSol(e.target.value)}
+                        className="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
                       />
+                      <span className="text-[11px] font-mono text-zinc-500 ml-1 select-none">
+                        SOL
+                      </span>
                     </div>
                     <button
                       type="submit"
