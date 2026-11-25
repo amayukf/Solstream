@@ -41,7 +41,7 @@ Files: `src/app/api/creators/[username]/route.ts`, `src/app/api/creators/route.t
 - Claim availability checks chain + DB; lookup failure shows an error, not “available”.
 Acceptance: recent direct on-chain tip visible after refresh; duplicate handle doesn’t break directory; DB outage still serves chain data; typecheck passes.
 
-## [ ] Fix 5 — Ownership, stats, leaderboard
+## [x] Fix 5 — Ownership, stats, leaderboard
 Files: `src/lib/storage.ts`, `src/app/[username]/page.tsx`, `src/app/dashboard/page.tsx`, `src/app/page.tsx`, `src/components/tipping/TopDonorsLeaderboard.tsx`, `src/app/api/creators/[username]/route.ts`, `src/lib/supabaseDb.ts`.
 - Add `cacheCreatorProfile` (does not set active handle). Fan page uses it, not `saveStoredCreator`.
 - Only set active handle for owned profiles.

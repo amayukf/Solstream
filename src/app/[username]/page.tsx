@@ -8,10 +8,11 @@ import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useSolStreamProgram } from "@/hooks/useSolStreamProgram";
 import {
   getStoredCreator,
-  saveStoredCreator,
+  cacheCreatorProfile,
   getStoredTips,
   addStoredTip,
   TipRecord,
+  LeaderboardEntry,
 } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { CreatorProfileHeader } from "@/components/tipping/CreatorProfileHeader";
@@ -42,6 +43,7 @@ export default function FanTippingPage({
   const [error, setError] = useState<string | null>(null);
 
   const [tips, setTips] = useState<TipRecord[]>([]);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
 
   // Success modal state with real verification status
@@ -144,15 +146,21 @@ export default function FanTippingPage({
               isInitialized: true,
             });
 
-            saveStoredCreator({
+            cacheCreatorProfile({
               username: c.username,
               authority: c.authority,
               voiceId: c.voiceId,
               goalTitle: c.goalTitle,
               goalTargetLamports: c.goalTargetLamports,
               goalCurrentLamports: c.goalCurrentLamports,
+              totalTips: c.totalTips,
+              totalVolume: c.totalVolume,
               createdAt: Date.now(),
             });
+
+            if (Array.isArray(data.leaderboard)) {
+              setLeaderboard(data.leaderboard);
+            }
 
             setTips((prev) =>
               mergeTipLists(getStoredTips(username), mergeTipLists(prev, chainTips))
@@ -344,6 +352,16 @@ export default function FanTippingPage({
               serverVerified: true,
               ttsEngine: resData.ttsEngine || null,
             }));
+            fetch(`/api/creators/${encodeURIComponent(username)}`, {
+              cache: "no-store",
+            })
+              .then((r) => (r.ok ? r.json() : null))
+              .then((freshData) => {
+                if (Array.isArray(freshData?.leaderboard)) {
+                  setLeaderboard(freshData.leaderboard);
+                }
+              })
+              .catch(() => {});
           }
         })
         .catch(() => {});
@@ -449,7 +467,11 @@ export default function FanTippingPage({
 
           {/* COLUMN 3: TOP SUPPORTERS LEADERBOARD (3 cols) */}
           <div className="lg:col-span-3">
-            <TopDonorsLeaderboard tips={tips} username={username} />
+            <TopDonorsLeaderboard
+              tips={tips}
+              leaderboard={leaderboard}
+              username={username}
+            />
           </div>
         </div>
       </main>

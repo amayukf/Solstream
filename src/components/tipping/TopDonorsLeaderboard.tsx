@@ -2,28 +2,21 @@
 
 import React, { useMemo } from "react";
 import { Flame } from "lucide-react";
-import type { TipRecord } from "@/lib/storage";
+import type { TipRecord, LeaderboardEntry } from "@/lib/storage";
 
 interface TopDonorsLeaderboardProps {
   tips: TipRecord[];
+  leaderboard?: LeaderboardEntry[] | null;
   username: string;
-}
-
-interface AggregatedSupporter {
-  donorKey: string;
-  displayName: string;
-  totalLamports: number;
-  count: number;
-  latestSig: string;
-  latestTimestamp: number;
 }
 
 export const TopDonorsLeaderboard: React.FC<TopDonorsLeaderboardProps> = ({
   tips,
+  leaderboard,
   username,
 }) => {
-  const aggregated = useMemo(() => {
-    const map = new Map<string, AggregatedSupporter>();
+  const aggregatedFromTips = useMemo(() => {
+    const map = new Map<string, LeaderboardEntry>();
 
     for (const t of tips) {
       const donorKey = t.donor || t.displayName || t.signature;
@@ -60,13 +53,16 @@ export const TopDonorsLeaderboard: React.FC<TopDonorsLeaderboardProps> = ({
     );
   }, [tips]);
 
+  // Render SQL aggregate when available; fall back to recent tips only when unavailable
+  const supporters = leaderboard ?? aggregatedFromTips;
+
   return (
     <div className="rounded-3xl bg-[#13141F] border border-white/5 p-6 space-y-4">
       <h2 className="font-display text-sm font-bold text-white">
         Top supporters
       </h2>
 
-      {aggregated.length === 0 ? (
+      {supporters.length === 0 ? (
         <div className="py-8 text-center text-xs text-zinc-500 space-y-2">
           <Flame className="w-6 h-6 mx-auto text-zinc-600" />
           <p>No tips received yet.</p>
@@ -76,7 +72,7 @@ export const TopDonorsLeaderboard: React.FC<TopDonorsLeaderboardProps> = ({
         </div>
       ) : (
         <div className="space-y-3">
-          {aggregated.slice(0, 5).map((s, idx) => {
+          {supporters.slice(0, 5).map((s, idx) => {
             const medalBg =
               idx === 0
                 ? "bg-[#FFD700] text-black"
@@ -85,7 +81,9 @@ export const TopDonorsLeaderboard: React.FC<TopDonorsLeaderboardProps> = ({
                 : idx === 2
                 ? "bg-[#CD7F32] text-black"
                 : "bg-[#1A1B29] text-zinc-400";
-            const shortSig = `${s.latestSig.slice(0, 4)}...${s.latestSig.slice(-4)}`;
+            const shortSig = s.latestSig
+              ? `${s.latestSig.slice(0, 4)}...${s.latestSig.slice(-4)}`
+              : "on-chain";
             const solscanUrl = `https://solscan.io/tx/${s.latestSig}?cluster=devnet`;
             const solAmt = (s.totalLamports / 1_000_000_000).toFixed(3);
 

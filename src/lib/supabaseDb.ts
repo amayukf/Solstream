@@ -25,6 +25,15 @@ export interface DbCreatorRow extends OnChainCreator {
   id: string;
 }
 
+export interface DbLeaderboardEntry {
+  donorKey: string;
+  displayName: string;
+  totalLamports: number;
+  count: number;
+  latestSig: string;
+  latestTimestamp: number;
+}
+
 export function isPostgresUniqueViolation(err: unknown): boolean {
   return Boolean(
     err &&
@@ -182,6 +191,48 @@ export async function getTipsFromDb(username: string): Promise<OnChainTip[]> {
     [username.toLowerCase()]
   );
   return res.rows.map(mapTipRow);
+}
+
+export async function getTopDonorsFromDb(
+  creatorId: string
+): Promise<DbLeaderboardEntry[]> {
+  const pool = getPool();
+  if (!pool || !creatorId) return [];
+
+  const res = await pool.query(
+    `
+    SELECT
+      COALESCE(NULLIF(donor_wallet, ''), NULLIF(display_name, ''), signature) AS donor_key,
+      COALESCE(
+        NULLIF(
+          (ARRAY_AGG(display_name ORDER BY created_at DESC)
+            FILTER (WHERE display_name IS NOT NULL AND display_name <> '' AND display_name <> 'Anonymous')
+          )[1],
+          ''
+        ),
+        'Anonymous'
+      ) AS display_name,
+      SUM(amount_lamports)::bigint AS total_lamports,
+      COUNT(*)::int AS tip_count,
+      (ARRAY_AGG(signature ORDER BY created_at DESC))[1] AS latest_sig,
+      MAX(EXTRACT(EPOCH FROM created_at) * 1000)::bigint AS latest_timestamp
+    FROM public.tips
+    WHERE creator_id = $1
+    GROUP BY COALESCE(NULLIF(donor_wallet, ''), NULLIF(display_name, ''), signature)
+    ORDER BY total_lamports DESC, latest_timestamp DESC
+    LIMIT 10
+    `,
+    [creatorId]
+  );
+
+  return res.rows.map((r: any) => ({
+    donorKey: String(r.donor_key),
+    displayName: String(r.display_name || "Anonymous"),
+    totalLamports: Number(r.total_lamports) || 0,
+    count: Number(r.tip_count) || 0,
+    latestSig: String(r.latest_sig || ""),
+    latestTimestamp: Number(r.latest_timestamp) || 0,
+  }));
 }
 
 export async function hasTipSignatureInDb(

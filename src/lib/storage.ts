@@ -7,6 +7,8 @@ export interface CreatorProfile {
   goalTitle: string;
   goalTargetLamports: number;
   goalCurrentLamports: number;
+  totalTips?: number;
+  totalVolume?: number;
   bio?: string;
   createdAt: number;
 }
@@ -21,9 +23,21 @@ export interface TipRecord {
   timestamp: number;
 }
 
+export interface LeaderboardEntry {
+  donorKey: string;
+  displayName: string;
+  totalLamports: number;
+  count: number;
+  latestSig: string;
+  latestTimestamp: number;
+}
+
 const CREATORS_KEY = "solstream_creators";
 const TIPS_PREFIX = "solstream_tips_";
 const ACTIVE_HANDLE_KEY = "solstream_active_handle";
+
+export const MAX_STORED_CREATORS = 50;
+export const MAX_STORED_TIPS_PER_CREATOR = 100;
 
 export function getStoredCreators(): Record<string, CreatorProfile> {
   if (typeof window === "undefined") return {};
@@ -62,7 +76,10 @@ export function setActiveHandle(username: string): void {
   localStorage.setItem(ACTIVE_HANDLE_KEY, username.toLowerCase());
 }
 
-export function saveStoredCreator(profile: CreatorProfile): void {
+/**
+ * Caches a viewed creator profile locally (capped at 50 profiles) without changing active handle.
+ */
+export function cacheCreatorProfile(profile: CreatorProfile): void {
   if (typeof window === "undefined") return;
   try {
     const creators = getStoredCreators();
@@ -70,11 +87,41 @@ export function saveStoredCreator(profile: CreatorProfile): void {
     creators[cleanUsername] = {
       ...profile,
       username: cleanUsername,
+      createdAt: profile.createdAt || Date.now(),
     };
+
+    const entries = Object.entries(creators);
+    if (entries.length > MAX_STORED_CREATORS) {
+      entries.sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
+      while (entries.length > MAX_STORED_CREATORS) {
+        const oldest = entries.shift();
+        if (oldest && oldest[0] !== cleanUsername) {
+          delete creators[oldest[0]];
+        }
+      }
+    }
+
     localStorage.setItem(CREATORS_KEY, JSON.stringify(creators));
-    setActiveHandle(cleanUsername);
   } catch (e) {
-    console.error("Failed to save creator to localStorage:", e);
+    console.error("Failed to cache creator in localStorage:", e);
+  }
+}
+
+/**
+ * Saves a creator profile and updates active handle only when owned by the connected wallet.
+ */
+export function saveStoredCreator(
+  profile: CreatorProfile,
+  ownerWallet?: string | null
+): void {
+  if (typeof window === "undefined") return;
+  cacheCreatorProfile(profile);
+  if (
+    ownerWallet &&
+    profile.authority &&
+    ownerWallet.toLowerCase() === profile.authority.toLowerCase()
+  ) {
+    setActiveHandle(profile.username.toLowerCase());
   }
 }
 
@@ -96,9 +143,12 @@ export function addStoredTip(username: string, tip: TipRecord): void {
     const cleanUsername = username.toLowerCase();
     const key = `${TIPS_PREFIX}${cleanUsername}`;
     const tips = getStoredTips(cleanUsername);
-    // Avoid duplicate signatures
+    // Avoid duplicate signatures and cap at 100 tips per creator
     if (!tips.some((t) => t.signature === tip.signature)) {
       tips.unshift(tip);
+      if (tips.length > MAX_STORED_TIPS_PER_CREATOR) {
+        tips.length = MAX_STORED_TIPS_PER_CREATOR;
+      }
       localStorage.setItem(key, JSON.stringify(tips));
       // Dispatch storage event manually for same-tab listeners
       window.dispatchEvent(

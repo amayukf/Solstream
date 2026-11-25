@@ -71,11 +71,12 @@ export default function CreatorDashboardPage() {
   // Real tips from localStorage + Solana Devnet API
   const [tips, setTips] = useState<TipRecord[]>([]);
 
-  // Refresh real tips from localStorage + merge on-chain Devnet tips
+  // Refresh real tips from localStorage + merge on-chain Devnet tips (totals always follow creator chain stats)
   const refreshDashboardTips = useCallback(async (uname: string) => {
     if (!uname) return;
     const localTips = getStoredTips(uname);
     let merged = localTips;
+    let hasAuthoritativeCreatorStats = false;
 
     try {
       const res = await fetch(`/api/creators/${encodeURIComponent(uname)}`, {
@@ -87,6 +88,16 @@ export default function CreatorDashboardPage() {
           setCurrentGoalSol(
             (Number(data.creator.goalCurrentLamports) || 0) / 1_000_000_000
           );
+          if (
+            data.creator.totalTips !== undefined &&
+            data.creator.totalVolume !== undefined
+          ) {
+            hasAuthoritativeCreatorStats = true;
+            setTotalTipsCount(Number(data.creator.totalTips) || 0);
+            setTotalVolumeSol(
+              (Number(data.creator.totalVolume) || 0) / 1_000_000_000
+            );
+          }
         }
         const chainTips: TipRecord[] = (data?.tips || []).map((t: any) => ({
           signature: t.signature,
@@ -108,9 +119,20 @@ export default function CreatorDashboardPage() {
     }
 
     setTips(merged);
-    const totalLamports = merged.reduce((acc, t) => acc + t.amountLamports, 0);
-    setTotalVolumeSol(totalLamports / 1_000_000_000);
-    setTotalTipsCount(merged.length);
+    if (!hasAuthoritativeCreatorStats) {
+      const stored = getStoredCreator(uname);
+      if (
+        stored?.totalTips !== undefined &&
+        stored?.totalVolume !== undefined
+      ) {
+        setTotalTipsCount(stored.totalTips);
+        setTotalVolumeSol(stored.totalVolume / 1_000_000_000);
+      } else {
+        const totalLamports = merged.reduce((acc, t) => acc + t.amountLamports, 0);
+        setTotalVolumeSol(totalLamports / 1_000_000_000);
+        setTotalTipsCount(merged.length);
+      }
+    }
   }, []);
 
   // Dynamically find creator profile by wallet address & on-chain PDA
@@ -146,48 +168,66 @@ export default function CreatorDashboardPage() {
         if (acc) {
           const walletCreator = getCreatorByWallet(walletStr);
           const active = getActiveHandle();
-          const stored = walletCreator || (active ? getStoredCreator(active) : null);
+          const activeCreator = active ? getStoredCreator(active) : null;
+          const ownedActiveCreator =
+            activeCreator &&
+            activeCreator.authority.toLowerCase() === walletStr.toLowerCase()
+              ? activeCreator
+              : null;
+          const stored = walletCreator || ownedActiveCreator;
           const onChainHandle = (acc.username || stored?.username || "").toLowerCase();
 
           if (onChainHandle) {
             setUsername(onChainHandle);
             setIsInitialized(true);
 
-            const target = acc.goalTargetLamports ?? acc.goal_target_lamports;
-            const current = acc.goalCurrentLamports ?? acc.goal_current_lamports;
+            const toNum = (raw: any, fallback: number) =>
+              raw !== undefined && raw !== null
+                ? typeof raw === "number"
+                  ? raw
+                  : raw.toNumber
+                  ? raw.toNumber()
+                  : Number(raw)
+                : fallback;
 
-            const targetVal =
-              target !== undefined && target !== null
-                ? typeof target === "number"
-                  ? target
-                  : target.toNumber
-                  ? target.toNumber()
-                  : Number(target)
-                : stored?.goalTargetLamports || 3_000_000_000;
-
-            const currentVal =
-              current !== undefined && current !== null
-                ? typeof current === "number"
-                  ? current
-                  : current.toNumber
-                  ? current.toNumber()
-                  : Number(current)
-                : stored?.goalCurrentLamports || 0;
+            const targetVal = toNum(
+              acc.goalTargetLamports ?? acc.goal_target_lamports,
+              stored?.goalTargetLamports || 3_000_000_000
+            );
+            const currentVal = toNum(
+              acc.goalCurrentLamports ?? acc.goal_current_lamports,
+              stored?.goalCurrentLamports || 0
+            );
+            const chainTotalTips = toNum(
+              acc.totalTips ?? acc.total_tips,
+              stored?.totalTips || 0
+            );
+            const chainTotalVolume = toNum(
+              acc.totalVolume ?? acc.total_volume,
+              stored?.totalVolume || 0
+            );
 
             setGoalTitle(acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal");
             setGoalTargetSol((targetVal / 1_000_000_000).toString());
             setCurrentGoalSol(currentVal / 1_000_000_000);
+            setTotalTipsCount(chainTotalTips);
+            setTotalVolumeSol(chainTotalVolume / 1_000_000_000);
             setSelectedVoice(acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id);
 
-            saveStoredCreator({
-              username: onChainHandle,
-              authority: walletStr,
-              voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
-              goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
-              goalTargetLamports: targetVal,
-              goalCurrentLamports: currentVal,
-              createdAt: Date.now(),
-            });
+            saveStoredCreator(
+              {
+                username: onChainHandle,
+                authority: walletStr,
+                voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
+                goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
+                goalTargetLamports: targetVal,
+                goalCurrentLamports: currentVal,
+                totalTips: chainTotalTips,
+                totalVolume: chainTotalVolume,
+                createdAt: Date.now(),
+              },
+              walletStr
+            );
 
             refreshDashboardTips(onChainHandle);
             setIsCheckingAccount(false);
@@ -302,15 +342,18 @@ export default function CreatorDashboardPage() {
       const lamports = Math.round(parseFloat(goalTargetSol) * 1_000_000_000);
       await initializeCreator(username, selectedVoice, lamports, goalTitle);
       setIsInitialized(true);
-      saveStoredCreator({
-        username,
-        authority: publicKey.toBase58(),
-        voiceId: selectedVoice,
-        goalTitle,
-        goalTargetLamports: lamports,
-        goalCurrentLamports: 0,
-        createdAt: Date.now(),
-      });
+      saveStoredCreator(
+        {
+          username,
+          authority: publicKey.toBase58(),
+          voiceId: selectedVoice,
+          goalTitle,
+          goalTargetLamports: lamports,
+          goalCurrentLamports: 0,
+          createdAt: Date.now(),
+        },
+        publicKey.toBase58()
+      );
       await fetch("/api/creators/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -361,15 +404,18 @@ export default function CreatorDashboardPage() {
       const lamports = Math.round(targetNum * 1_000_000_000);
       await updateGoal(lamports, cleanGoalTitle);
       setCurrentGoalSol(0);
-      saveStoredCreator({
-        username,
-        authority: publicKey.toBase58(),
-        voiceId: selectedVoice,
-        goalTitle: cleanGoalTitle,
-        goalTargetLamports: lamports,
-        goalCurrentLamports: 0,
-        createdAt: Date.now(),
-      });
+      saveStoredCreator(
+        {
+          username,
+          authority: publicKey.toBase58(),
+          voiceId: selectedVoice,
+          goalTitle: cleanGoalTitle,
+          goalTargetLamports: lamports,
+          goalCurrentLamports: 0,
+          createdAt: Date.now(),
+        },
+        publicKey.toBase58()
+      );
       await fetch("/api/creators/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -386,15 +432,18 @@ export default function CreatorDashboardPage() {
   const handleSelectVoice = async (voiceId: string) => {
     setSelectedVoice(voiceId);
     if (username && publicKey) {
-      saveStoredCreator({
-        username,
-        authority: publicKey.toBase58(),
-        voiceId,
-        goalTitle,
-        goalTargetLamports: Math.round((parseFloat(goalTargetSol) || 3.0) * 1_000_000_000),
-        goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
-        createdAt: Date.now(),
-      });
+      saveStoredCreator(
+        {
+          username,
+          authority: publicKey.toBase58(),
+          voiceId,
+          goalTitle,
+          goalTargetLamports: Math.round((parseFloat(goalTargetSol) || 3.0) * 1_000_000_000),
+          goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
+          createdAt: Date.now(),
+        },
+        publicKey.toBase58()
+      );
     }
     if (!connected || !isInitialized || !publicKey) return;
     try {

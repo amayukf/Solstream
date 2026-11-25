@@ -8,7 +8,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { SolanaMarketBoard } from "@/components/SolanaMarketBoard";
 import { GiftIcon } from "@/components/tipping/GiftIcon";
-import { getActiveHandle } from "@/lib/storage";
+import { getActiveHandle, getStoredCreator } from "@/lib/storage";
 import {
   ArrowDown,
   TrendingUp,
@@ -65,14 +65,16 @@ export default function HomePage() {
 
   useEffect(() => {
     const stored = getActiveHandle();
-    if (stored) setActiveHandle(stored);
+    const storedCreator = stored ? getStoredCreator(stored) : null;
+    const ownedActive = stored && storedCreator ? stored : null;
+    if (ownedActive) setActiveHandle(ownedActive);
 
     fetch("/api/creators")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (Array.isArray(data?.creators) && data.creators.length > 0) {
           setOnChainCreators(data.creators);
-          const primaryHandle = stored || data.creators[0].username;
+          const primaryHandle = ownedActive || data.creators[0].username;
           return fetch(`/api/creators/${encodeURIComponent(primaryHandle)}`)
             .then((r) => (r.ok ? r.json() : null))
             .then((creatorData) => {
@@ -97,6 +99,17 @@ export default function HomePage() {
     const walletStr = publicKey.toBase58();
     return onChainCreators.find((c) => c.authority === walletStr) || null;
   }, [publicKey, onChainCreators]);
+
+  const ownedActiveHandle = useMemo(() => {
+    if (myCreator) return myCreator.username;
+    if (!activeHandle) return null;
+    const cached = getStoredCreator(activeHandle);
+    if (!cached) return null;
+    if (publicKey && cached.authority.toLowerCase() !== publicKey.toBase58().toLowerCase()) {
+      return null;
+    }
+    return activeHandle;
+  }, [myCreator, activeHandle, publicKey]);
 
   const networkStats = useMemo(() => {
     const totalTips = onChainCreators.reduce(
@@ -158,7 +171,7 @@ export default function HomePage() {
             <a href="#how-it-works" className="hover:text-white transition-colors">
               How it works
             </a>
-            {(myCreator || activeHandle) && (
+            {(myCreator || ownedActiveHandle) && (
               <Link
                 href="/dashboard"
                 className="hover:text-white transition-colors"
@@ -369,7 +382,7 @@ export default function HomePage() {
                 <span className="text-zinc-300 font-semibold">
                   Fan page ·{" "}
                   <span className="text-white font-mono">
-                    @{activeHandle || onChainCreators[0]?.username || "claim"}
+                    @{ownedActiveHandle || onChainCreators[0]?.username || "claim"}
                   </span>
                 </span>
                 <span className="text-zinc-500 font-mono text-[11px]">
@@ -400,8 +413,8 @@ export default function HomePage() {
 
               <Link
                 href={
-                  activeHandle || onChainCreators[0]?.username
-                    ? `/${activeHandle || onChainCreators[0]?.username}`
+                  ownedActiveHandle || onChainCreators[0]?.username
+                    ? `/${ownedActiveHandle || onChainCreators[0]?.username}`
                     : "/claim"
                 }
                 className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#14F195]/20"

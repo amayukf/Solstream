@@ -9,10 +9,12 @@ import {
 import {
   getCreatorFromDb,
   getTipsFromDb,
+  getTopDonorsFromDb,
   syncCreatorExactStatsInDb,
   insertTipInDb,
   isPostgresUniqueViolation,
   type DbCreatorRow,
+  type DbLeaderboardEntry,
 } from "@/lib/supabaseDb";
 
 function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
@@ -163,6 +165,16 @@ export async function GET(
     }
 
     const mergedTips = mergeTipArrays(dbTips, chainTips);
+    let leaderboard: DbLeaderboardEntry[] | null = null;
+    if (dbHealthy && resolvedCreator.id) {
+      try {
+        leaderboard = await getTopDonorsFromDb(resolvedCreator.id);
+      } catch (err) {
+        console.warn(`GET /api/creators/${username} leaderboard warning:`, err);
+        leaderboard = null;
+      }
+    }
+
     const source = !dbHealthy
       ? "solana"
       : chainCreator
@@ -174,6 +186,7 @@ export async function GET(
       source,
       creator: resolvedCreator,
       tips: mergedTips,
+      leaderboard,
     });
   } catch (err) {
     console.error("GET /api/creators/[username] error:", err);

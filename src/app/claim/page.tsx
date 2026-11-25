@@ -203,15 +203,18 @@ function ClaimHandleForm() {
           setExistingOnChainHandle(uname);
           setHandle((prev) => prev || uname);
 
-          saveStoredCreator({
-            username: uname,
-            authority: publicKey.toBase58(),
-            voiceId: acc.voiceId || acc.voice_id || VOICES[0].id,
-            goalTitle: acc.goalTitle || acc.goal_title || "Stream Goal",
-            goalTargetLamports: targetLamports,
-            goalCurrentLamports: currentLamports,
-            createdAt: Date.now(),
-          });
+          saveStoredCreator(
+            {
+              username: uname,
+              authority: publicKey.toBase58(),
+              voiceId: acc.voiceId || acc.voice_id || VOICES[0].id,
+              goalTitle: acc.goalTitle || acc.goal_title || "Stream Goal",
+              goalTargetLamports: targetLamports,
+              goalCurrentLamports: currentLamports,
+              createdAt: Date.now(),
+            },
+            publicKey.toBase58()
+          );
         }
       } catch (e) {
         console.log("No existing profile found:", e);
@@ -288,15 +291,18 @@ function ClaimHandleForm() {
       await initializeCreator(handle, selectedVoice, lamports, goalTitle);
 
       // Save real creator profile to localStorage
-      saveStoredCreator({
-        username: handle,
-        authority: publicKey.toBase58(),
-        voiceId: selectedVoice,
-        goalTitle,
-        goalTargetLamports: lamports,
-        goalCurrentLamports: 0,
-        createdAt: Date.now(),
-      });
+      saveStoredCreator(
+        {
+          username: handle,
+          authority: publicKey.toBase58(),
+          voiceId: selectedVoice,
+          goalTitle,
+          goalTargetLamports: lamports,
+          goalCurrentLamports: 0,
+          createdAt: Date.now(),
+        },
+        publicKey.toBase58()
+      );
 
       // Sync creator PDA into Supabase Postgres
       const regRes = await fetch("/api/creators/register", {
@@ -323,15 +329,18 @@ function ClaimHandleForm() {
         errMsg.includes("AccountAlreadyInUse")
       ) {
         // Already initialized on-chain
-        saveStoredCreator({
-          username: existingOnChainHandle || handle,
-          authority: publicKey.toBase58(),
-          voiceId: selectedVoice,
-          goalTitle,
-          goalTargetLamports: Math.round(parseFloat(goalTarget) * 1_000_000_000),
-          goalCurrentLamports: 0,
-          createdAt: Date.now(),
-        });
+        saveStoredCreator(
+          {
+            username: existingOnChainHandle || handle,
+            authority: publicKey.toBase58(),
+            voiceId: selectedVoice,
+            goalTitle,
+            goalTargetLamports: Math.round(parseFloat(goalTarget) * 1_000_000_000),
+            goalCurrentLamports: 0,
+            createdAt: Date.now(),
+          },
+          publicKey.toBase58()
+        );
         router.push("/dashboard");
       } else {
         setError(errMsg || "Failed to initialize creator profile on Solana Devnet.");
