@@ -40,8 +40,8 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 | `/claim` | On-chain handle registration, alert voice picker, and stream goal setup. |
 | `/dashboard` | Creator Studio with OBS Browser Source URL, live SOL metrics, goal & voice controls, and realtime tip ledger. |
 | `/[username]` | Public fan tipping page with 6 micro-tiers, live SOL/USD converter, Amharic preset chips, and sorted Top Supporters leaderboard. |
-| `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with 7s auto-dismiss alert cards, synth chime + speech synthesis, FIFO queue, and goal bar. |
-| `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST` with `SOLSTREAM_RECOVERY_SECRET` or `CRON_SECRET`) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
+| `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with 7s auto-dismiss alert cards, synth chime + ElevenLabs AI voice (with browser speech fallback), FIFO queue, and goal bar. |
+| `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST`, fails closed with `503` if `SOLSTREAM_RECOVERY_SECRET` / `CRON_SECRET` is unset and `401` if unauthorized) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
 | `/api/prices` | Server-cached live Solana ecosystem price feed (CoinGecko primary with Binance fallback). |
 
 ---
@@ -50,7 +50,7 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 
 - **Blockchain:** Solana Devnet, Anchor `0.30.1` (Rust)
 - **Database & Audio Storage:** Supabase PostgreSQL, Realtime, and Storage (`stream-alerts/<username>/<signature>.mp3`)
-- **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS
+- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS
 - **Typography:** `Space Grotesk`, `Plus Jakarta Sans`, `JetBrains Mono`
 - **Wallets:** `@solana/wallet-adapter-react` (Solana Wallet Standard: Phantom, Solflare, Backpack)
 - **Market Data:** CoinGecko Markets API & Binance 24h Ticker API
@@ -100,7 +100,8 @@ npm test   # runs `anchor test` against local validator
 
 ## 🔒 Security & Least-Privilege Database Role
 
-- **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Provide the Supabase root CA via `DATABASE_SSL_CA` or `PGSSLROOTCERT` for hosted Postgres pooler connections.
+- **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Hosted Supabase pooler connections require the Supabase root CA via `DATABASE_SSL_CA` (PEM contents) or `PGSSLROOTCERT` (file path). Never commit `.crt` / `.pem` certificate files to Git—configure them via environment variables or secret managers in deployment.
+- **Protected Recovery Route:** `/api/tips/recover` fails closed (`503`) when neither `SOLSTREAM_RECOVERY_SECRET` nor `CRON_SECRET` is configured, and rejects missing/invalid credentials with `401`.
 - **Least-Privilege DB Role:** Create a dedicated non-superuser role (`solstream_app`) with access limited to `public.creators` and `public.tips` (no `CREATE`, `DROP`, `ALTER`, or `TRUNCATE`):
   ```sql
   CREATE ROLE solstream_app WITH LOGIN PASSWORD 'REPLACE_WITH_STRONG_PASSWORD' NOBYPASSRLS;

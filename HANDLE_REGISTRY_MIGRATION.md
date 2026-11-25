@@ -5,7 +5,7 @@ This runbook covers deploying the updated `solstream` Anchor program (`HandleReg
 > **Important:** Existing Devnet `CreatorAccount` PDAs (`seeds = ["creator", authority]`) remain intact across a program upgrade (`solana program deploy`), provided the `CreatorAccount` struct layout is unchanged (it is unchanged).
 
 ## 1. Pre-Upgrade Verification
-1. Verify program build & tests locally (after Anchor CLI / Rust toolchain setup):
+1. Verify program build & tests locally where Rust, Solana CLI, and Anchor `0.30.1` are installed (not run automatically when the local Anchor toolchain is unavailable):
    ```bash
    anchor build
    anchor test
