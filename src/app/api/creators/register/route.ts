@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
+import { PublicKey } from "@solana/web3.js";
 import {
   fetchOnChainCreatorByWallet,
   invalidateCreatorCache,
 } from "@/lib/solanaServer";
-import { syncCreatorExactStatsInDb } from "@/lib/supabaseDb";
+import {
+  getCreatorFromDb,
+  syncCreatorExactStatsInDb,
+  isPostgresUniqueViolation,
+} from "@/lib/supabaseDb";
 
 export async function POST(req: Request) {
   try {
@@ -18,6 +23,15 @@ export async function POST(req: Request) {
       );
     }
 
+    try {
+      new PublicKey(walletAddress);
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid walletAddress" },
+        { status: 400 }
+      );
+    }
+
     // Zero-trust: always verify creator PDA account directly on Solana Devnet
     const onChainCreator = await fetchOnChainCreatorByWallet(walletAddress);
     if (!onChainCreator) {
@@ -27,16 +41,44 @@ export async function POST(req: Request) {
       );
     }
 
-    const saved = await syncCreatorExactStatsInDb(onChainCreator);
+    const existingByHandle = await getCreatorFromDb(onChainCreator.username);
+    if (
+      existingByHandle &&
+      existingByHandle.authority !== onChainCreator.authority
+    ) {
+      return NextResponse.json(
+        {
+          error: `Handle @${onChainCreator.username} is already registered to another wallet`,
+        },
+        { status: 409 }
+      );
+    }
+
+    let saved = null;
+    try {
+      saved = await syncCreatorExactStatsInDb(onChainCreator);
+    } catch (err) {
+      if (isPostgresUniqueViolation(err)) {
+        return NextResponse.json(
+          {
+            error: `Handle @${onChainCreator.username} is already registered to another wallet`,
+          },
+          { status: 409 }
+        );
+      }
+      throw err;
+    }
+
     invalidateCreatorCache(onChainCreator.username);
 
     return NextResponse.json({
       registered: true,
       creator: saved || onChainCreator,
     });
-  } catch (err: any) {
+  } catch (err) {
+    console.error("POST /api/creators/register error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to register creator in Supabase" },
+      { error: "Failed to register creator in Supabase" },
       { status: 500 }
     );
   }

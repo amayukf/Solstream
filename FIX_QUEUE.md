@@ -32,7 +32,7 @@ Files: `programs/solstream/src/lib.rs`, `src/idl/solstream.json`, `src/hooks/use
 - Do not deploy; add a migration/runbook.
 Acceptance: second wallet cannot claim same handle; legacy creator can register once; IDL/client consistent; typecheck passes.
 
-## [ ] Fix 4 — Chain-first reads
+## [x] Fix 4 — Chain-first reads
 Files: `src/app/api/creators/[username]/route.ts`, `src/app/api/creators/route.ts`, `src/app/api/creators/register/route.ts`, `src/lib/supabaseDb.ts`, `src/app/claim/page.tsx`.
 - Fetch on-chain CreatorAccount even when a DB row exists; sync exact stats in try/catch.
 - Merge DB + chain creators; chain wins for stats.

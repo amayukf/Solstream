@@ -1,34 +1,88 @@
 import { NextResponse } from "next/server";
-import { fetchAllOnChainCreators } from "@/lib/solanaServer";
+import {
+  fetchAllOnChainCreators,
+  type OnChainCreator,
+} from "@/lib/solanaServer";
 import {
   getCreatorsFromDb,
   syncCreatorExactStatsInDb,
+  isPostgresUniqueViolation,
+  type DbCreatorRow,
 } from "@/lib/supabaseDb";
 
 export async function GET(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const fresh = searchParams.get("fresh") === "1";
+
+  let dbCreators: DbCreatorRow[] = [];
+  let dbHealthy = false;
   try {
-    const { searchParams } = new URL(req.url);
-    const fresh = searchParams.get("fresh") === "1";
+    dbCreators = await getCreatorsFromDb();
+    dbHealthy = true;
+  } catch (err) {
+    console.warn("GET /api/creators DB read failed, serving chain data:", err);
+  }
 
-    let dbCreators = await getCreatorsFromDb();
+  let chainCreators: OnChainCreator[] = [];
+  let chainHealthy = false;
+  try {
+    chainCreators = await fetchAllOnChainCreators(fresh);
+    chainHealthy = true;
+  } catch (err) {
+    console.warn("GET /api/creators Solana fetch failed:", err);
+  }
 
-    // Sync from Solana Devnet if DB is empty or fresh sync requested
-    if (dbCreators.length === 0 || fresh) {
-      const chainCreators = await fetchAllOnChainCreators(fresh);
-      for (const c of chainCreators) {
-        await syncCreatorExactStatsInDb(c);
-      }
-      dbCreators = await getCreatorsFromDb();
-      if (dbCreators.length === 0) {
-        return NextResponse.json({ creators: chainCreators, source: "solana" });
-      }
-    }
-
-    return NextResponse.json({ creators: dbCreators, source: "supabase" });
-  } catch (err: any) {
+  if (!dbHealthy && !chainHealthy) {
     return NextResponse.json(
-      { error: err?.message || "Failed to fetch creators" },
+      { error: "Failed to fetch creators" },
       { status: 500 }
     );
   }
+
+  // Sync chain creators into DB individually; never 500 directory for one duplicate (23505) or DB outage
+  if (dbHealthy && chainCreators.length > 0) {
+    for (const c of chainCreators) {
+      try {
+        await syncCreatorExactStatsInDb(c);
+      } catch (err) {
+        if (isPostgresUniqueViolation(err)) {
+          console.warn(
+            `Skipping duplicate handle "${c.username}" for wallet ${c.authority} (23505)`
+          );
+        } else {
+          console.warn(`DB sync warning for @${c.username}:`, err);
+        }
+      }
+    }
+
+    try {
+      dbCreators = await getCreatorsFromDb();
+    } catch (err) {
+      console.warn("GET /api/creators DB re-read warning:", err);
+    }
+  }
+
+  // Merge DB + chain creators; chain always wins for live stats
+  const mergedByAuthority = new Map<string, OnChainCreator & { id?: string }>();
+  for (const dbRow of dbCreators) {
+    mergedByAuthority.set(dbRow.authority, dbRow);
+  }
+  for (const chainRow of chainCreators) {
+    const existing = mergedByAuthority.get(chainRow.authority);
+    mergedByAuthority.set(
+      chainRow.authority,
+      existing
+        ? { ...existing, ...chainRow, id: existing.id }
+        : chainRow
+    );
+  }
+
+  const creators = Array.from(mergedByAuthority.values());
+  const source = !dbHealthy
+    ? "solana"
+    : chainCreators.length > 0
+    ? "solana+supabase"
+    : "supabase";
+
+  return NextResponse.json({ creators, source });
 }

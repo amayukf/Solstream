@@ -1,86 +1,184 @@
 import { NextResponse } from "next/server";
 import {
   fetchOnChainCreatorByUsername,
+  fetchOnChainCreatorByWallet,
   fetchRecentTipsForCreator,
+  type OnChainCreator,
+  type OnChainTip,
 } from "@/lib/solanaServer";
 import {
   getCreatorFromDb,
   getTipsFromDb,
   syncCreatorExactStatsInDb,
   insertTipInDb,
+  isPostgresUniqueViolation,
+  type DbCreatorRow,
 } from "@/lib/supabaseDb";
+
+function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
+  const map = new Map<string, OnChainTip>();
+  for (const item of [...a, ...b]) {
+    if (!item?.signature) continue;
+    const prev = map.get(item.signature);
+    if (!prev) {
+      map.set(item.signature, item);
+    } else {
+      map.set(item.signature, {
+        ...prev,
+        ...item,
+        audioDataUrl: prev.audioDataUrl || item.audioDataUrl || null,
+      });
+    }
+  }
+  return Array.from(map.values()).sort((x, y) => y.timestamp - x.timestamp);
+}
 
 export async function GET(
   req: Request,
   context: { params: { username: string } }
 ) {
   try {
-    const username = context.params.username.toLowerCase();
+    const username = context.params.username.trim().toLowerCase();
     const { searchParams } = new URL(req.url);
     const fresh = searchParams.get("fresh") === "1";
 
-    let dbCreator = await getCreatorFromDb(username);
+    let dbCreator: DbCreatorRow | null = null;
+    let dbHealthy = false;
+    try {
+      dbCreator = await getCreatorFromDb(username);
+      dbHealthy = true;
+    } catch (err) {
+      console.warn(`GET /api/creators/${username} DB read warning:`, err);
+    }
+    const prevDbTotalTips = dbCreator?.totalTips ?? 0;
 
-    // Sync from Solana Devnet if creator isn't cached in Supabase yet or ?fresh=1
-    if (!dbCreator || fresh) {
-      const chainCreator = await fetchOnChainCreatorByUsername(username, fresh);
-      if (!chainCreator) {
-        if (!dbCreator) {
-          return NextResponse.json(
-            { creator: null, tips: [], found: false },
-            { status: 404 }
-          );
+    // Always fetch on-chain CreatorAccount even when a DB row exists
+    let chainCreator: OnChainCreator | null = null;
+    let chainHealthy = false;
+    try {
+      if (dbCreator?.authority) {
+        const byWallet = await fetchOnChainCreatorByWallet(dbCreator.authority);
+        if (byWallet && byWallet.username === username) {
+          chainCreator = byWallet;
         }
-      } else {
-        dbCreator = (await syncCreatorExactStatsInDb(chainCreator)) || {
-          ...chainCreator,
-          id: "",
-        };
+      }
+      if (!chainCreator) {
+        chainCreator = await fetchOnChainCreatorByUsername(username, fresh);
+      }
+      chainHealthy = true;
+    } catch (err) {
+      console.warn(`GET /api/creators/${username} Solana read warning:`, err);
+    }
+
+    if (!dbHealthy && !chainHealthy) {
+      return NextResponse.json(
+        { error: "Failed to look up creator" },
+        { status: 500 }
+      );
+    }
+
+    if (chainCreator && dbHealthy) {
+      try {
+        const synced = await syncCreatorExactStatsInDb(chainCreator);
+        if (synced) dbCreator = synced;
+      } catch (err) {
+        if (isPostgresUniqueViolation(err)) {
+          console.warn(
+            `Sync skipped for duplicate handle "${chainCreator.username}" (${chainCreator.authority})`
+          );
+        } else {
+          console.warn(`Creator DB sync warning for @${username}:`, err);
+        }
       }
     }
 
-    if (!dbCreator) {
+    const resolvedCreator = chainCreator
+      ? { ...(dbCreator || {}), ...chainCreator, id: dbCreator?.id || "" }
+      : dbCreator;
+
+    if (!resolvedCreator) {
       return NextResponse.json(
         { creator: null, tips: [], found: false },
         { status: 404 }
       );
     }
 
-    let dbTips = await getTipsFromDb(username);
-
-    // Backfill historical on-chain tips into Supabase if DB has none yet or ?fresh=1
-    if ((dbTips.length === 0 || fresh) && dbCreator.pda) {
-      const chainTips = await fetchRecentTipsForCreator(
-        username,
-        dbCreator.pda,
-        fresh
-      );
-      if (dbCreator.id) {
-        for (const t of chainTips) {
-          await insertTipInDb(dbCreator.id, username, t, null);
-        }
-        // Re-sync exact on-chain totals so historical backfill doesn't double-count goal_current_lamports
-        const exactCreator = await fetchOnChainCreatorByUsername(username, false);
-        if (exactCreator) {
-          await syncCreatorExactStatsInDb(exactCreator);
-          dbCreator = (await getCreatorFromDb(username)) || dbCreator;
-        }
+    let dbTips: OnChainTip[] = [];
+    if (dbHealthy) {
+      try {
         dbTips = await getTipsFromDb(username);
-      }
-      if (dbTips.length === 0) {
-        dbTips = chainTips;
+      } catch (err) {
+        console.warn(`GET /api/creators/${username} tips DB warning:`, err);
+        dbHealthy = false;
       }
     }
 
+    const chainAheadOfDb = Boolean(
+      chainCreator &&
+        (chainCreator.totalTips > prevDbTotalTips ||
+          (chainCreator.totalTips > dbTips.length && dbTips.length < 50))
+    );
+
+    let chainTips: OnChainTip[] = [];
+    if (
+      (fresh || !dbHealthy || dbTips.length === 0 || chainAheadOfDb) &&
+      resolvedCreator.pda
+    ) {
+      try {
+        chainTips = await fetchRecentTipsForCreator(
+          username,
+          resolvedCreator.pda,
+          fresh || chainAheadOfDb
+        );
+      } catch (err) {
+        console.warn(
+          `GET /api/creators/${username} on-chain tips warning:`,
+          err
+        );
+      }
+
+      if (dbHealthy && resolvedCreator.id && chainTips.length > 0) {
+        const seenInDb = new Set(dbTips.map((t) => t.signature));
+        for (const t of chainTips) {
+          if (seenInDb.has(t.signature)) continue;
+          try {
+            await insertTipInDb(resolvedCreator.id, username, t, null);
+          } catch (err) {
+            console.warn(`Historical tip backfill warning for @${username}:`, err);
+          }
+        }
+        if (chainCreator) {
+          try {
+            await syncCreatorExactStatsInDb(chainCreator);
+          } catch (err) {
+            console.warn(`Creator post-backfill sync warning:`, err);
+          }
+        }
+        try {
+          dbTips = await getTipsFromDb(username);
+        } catch (err) {
+          console.warn(`Tips DB refresh warning for @${username}:`, err);
+        }
+      }
+    }
+
+    const mergedTips = mergeTipArrays(dbTips, chainTips);
+    const source = !dbHealthy
+      ? "solana"
+      : chainCreator
+      ? "solana+supabase"
+      : "supabase";
+
     return NextResponse.json({
       found: true,
-      source: "supabase",
-      creator: dbCreator,
-      tips: dbTips,
+      source,
+      creator: resolvedCreator,
+      tips: mergedTips,
     });
-  } catch (err: any) {
+  } catch (err) {
+    console.error("GET /api/creators/[username] error:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to look up creator" },
+      { error: "Failed to look up creator" },
       { status: 500 }
     );
   }

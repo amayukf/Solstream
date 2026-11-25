@@ -42,6 +42,7 @@ function ClaimHandleForm() {
 
   const [existingOnChainHandle, setExistingOnChainHandle] = useState<string | null>(null);
   const [registeredHandles, setRegisteredHandles] = useState<Record<string, string>>({});
+  const [directoryError, setDirectoryError] = useState<string | null>(null);
   const [handleLookup, setHandleLookup] = useState<{
     handle: string;
     checking: boolean;
@@ -56,8 +57,14 @@ function ClaimHandleForm() {
 
   useEffect(() => {
     fetch("/api/creators")
-      .then((r) => (r.ok ? r.json() : null))
+      .then(async (r) => {
+        if (!r.ok) {
+          throw new Error(`Directory lookup failed (${r.status})`);
+        }
+        return r.json();
+      })
       .then((data) => {
+        setDirectoryError(null);
         if (Array.isArray(data?.creators)) {
           const map: Record<string, string> = {};
           for (const c of data.creators) {
@@ -68,12 +75,14 @@ function ClaimHandleForm() {
           setRegisteredHandles(map);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        setDirectoryError(err?.message || "Failed to load creator directory");
+      });
   }, []);
 
   const cleanHandle = handle.trim().toLowerCase();
 
-  // Check HandleRegistry PDA directly on-chain whenever cleanHandle changes
+  // Check both on-chain HandleRegistry PDA and chain+DB creator API whenever cleanHandle changes
   useEffect(() => {
     if (!cleanHandle) {
       setHandleLookup({
@@ -94,26 +103,40 @@ function ClaimHandleForm() {
     });
 
     const timer = setTimeout(async () => {
-      try {
-        const reg = await fetchHandleRegistry(cleanHandle);
-        if (!cancelled) {
-          setHandleLookup({
-            handle: cleanHandle,
-            checking: false,
-            authority: reg?.authority || null,
-            error: null,
-          });
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setHandleLookup({
-            handle: cleanHandle,
-            checking: false,
-            authority: null,
-            error: err?.message || "On-chain handle lookup failed",
-          });
-        }
-      }
+      const [registryRes, apiRes] = await Promise.allSettled([
+        fetchHandleRegistry(cleanHandle),
+        fetch(`/api/creators/${encodeURIComponent(cleanHandle)}`, {
+          cache: "no-store",
+        }).then(async (r) => {
+          if (r.status === 404) return null;
+          if (!r.ok) throw new Error(`API handle check failed (${r.status})`);
+          const data = await r.json();
+          return data?.found && data?.creator?.authority
+            ? String(data.creator.authority)
+            : null;
+        }),
+      ]);
+
+      if (cancelled) return;
+
+      const chainAuthority =
+        registryRes.status === "fulfilled" ? registryRes.value?.authority || null : null;
+      const apiAuthority =
+        apiRes.status === "fulfilled" ? apiRes.value || null : null;
+      const resolvedAuthority = chainAuthority || apiAuthority;
+
+      const lookupFailed =
+        !resolvedAuthority &&
+        (registryRes.status === "rejected" || apiRes.status === "rejected");
+
+      setHandleLookup({
+        handle: cleanHandle,
+        checking: false,
+        authority: resolvedAuthority,
+        error: lookupFailed
+          ? "Could not verify handle availability on Solana & Supabase"
+          : null,
+      });
     }, 250);
 
     return () => {
@@ -122,17 +145,19 @@ function ClaimHandleForm() {
     };
   }, [cleanHandle, fetchHandleRegistry]);
 
-  const onChainHandleOwner =
+  const onChainOrApiHandleOwner =
     handleLookup.handle === cleanHandle ? handleLookup.authority : null;
   const handleLookupError =
-    handleLookup.handle === cleanHandle ? handleLookup.error : null;
+    handleLookup.handle === cleanHandle
+      ? handleLookup.error || (!onChainOrApiHandleOwner && directoryError ? directoryError : null)
+      : null;
   const isCheckingHandle =
     Boolean(cleanHandle) &&
     handleLookup.handle === cleanHandle &&
     handleLookup.checking;
 
   const handleOwner = cleanHandle
-    ? onChainHandleOwner || registeredHandles[cleanHandle]
+    ? onChainOrApiHandleOwner || registeredHandles[cleanHandle]
     : undefined;
   const isHandleTakenByOther = Boolean(
     handleOwner && (!publicKey || handleOwner !== publicKey.toBase58())
@@ -223,10 +248,36 @@ function ClaimHandleForm() {
     setIsLoading(true);
 
     try {
-      // Fresh on-chain HandleRegistry PDA check before submitting transaction
-      const latestRegistry = await fetchHandleRegistry(cleanHandle);
-      if (latestRegistry && latestRegistry.authority !== publicKey.toBase58()) {
-        setError(`@${cleanHandle} is already registered on-chain to another wallet.`);
+      // Fresh chain + DB handle availability check before submitting transaction
+      const [registryRes, apiRes] = await Promise.allSettled([
+        fetchHandleRegistry(cleanHandle),
+        fetch(`/api/creators/${encodeURIComponent(cleanHandle)}`, {
+          cache: "no-store",
+        }).then(async (r) => {
+          if (r.status === 404) return null;
+          if (!r.ok) throw new Error(`API handle check failed (${r.status})`);
+          const data = await r.json();
+          return data?.found && data?.creator?.authority
+            ? String(data.creator.authority)
+            : null;
+        }),
+      ]);
+
+      const latestOwner =
+        (registryRes.status === "fulfilled" ? registryRes.value?.authority : null) ||
+        (apiRes.status === "fulfilled" ? apiRes.value : null);
+
+      if (latestOwner && latestOwner !== publicKey.toBase58()) {
+        setError(`@${cleanHandle} is already registered to another wallet.`);
+        setIsLoading(false);
+        return;
+      }
+
+      if (
+        !latestOwner &&
+        (registryRes.status === "rejected" || apiRes.status === "rejected")
+      ) {
+        setError("Could not verify handle availability right now. Please try again.");
         setIsLoading(false);
         return;
       }
@@ -248,11 +299,18 @@ function ClaimHandleForm() {
       });
 
       // Sync creator PDA into Supabase Postgres
-      await fetch("/api/creators/register", {
+      const regRes = await fetch("/api/creators/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-      }).catch(() => {});
+      }).catch(() => null);
+
+      if (regRes && regRes.status === 409) {
+        const regErr = await regRes.json().catch(() => null);
+        setError(regErr?.error || `@${cleanHandle} conflicts with an existing handle.`);
+        setIsLoading(false);
+        return;
+      }
 
       // Redirect to creator dashboard
       router.push("/dashboard");
@@ -405,6 +463,11 @@ function ClaimHandleForm() {
             <span className="block text-[11px] text-zinc-500 mt-1.5">
               Lowercase letters, numbers and underscore · 1 to 32 characters
             </span>
+            {handleLookupError && !isHandleTakenByOther && !isHandleOwnedBySelf && (
+              <span className="block text-[11px] text-amber-300 mt-1">
+                {handleLookupError}
+              </span>
+            )}
           </div>
 
           {/* Alert Voice */}

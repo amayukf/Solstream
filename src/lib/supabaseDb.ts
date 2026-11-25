@@ -25,6 +25,15 @@ export interface DbCreatorRow extends OnChainCreator {
   id: string;
 }
 
+export function isPostgresUniqueViolation(err: unknown): boolean {
+  return Boolean(
+    err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code === "23505"
+  );
+}
+
 function mapCreatorRow(r: any): DbCreatorRow {
   return {
     id: r.id,
