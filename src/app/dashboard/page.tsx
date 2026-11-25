@@ -45,7 +45,9 @@ export default function CreatorDashboardPage() {
   const {
     getCreatorPda,
     fetchCreatorAccount,
+    fetchHandleRegistry,
     initializeCreator,
+    registerExistingHandle,
     updateGoal,
     updateVoice,
   } = useSolStreamProgram();
@@ -57,6 +59,8 @@ export default function CreatorDashboardPage() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [isUpdatingGoal, setIsUpdatingGoal] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isHandleLocked, setIsHandleLocked] = useState<boolean | null>(null);
+  const [isLockingHandle, setIsLockingHandle] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isCheckingAccount, setIsCheckingAccount] = useState(true);
 
@@ -459,6 +463,43 @@ export default function CreatorDashboardPage() {
     }
   };
 
+  useEffect(() => {
+    if (!connected || !isInitialized || !username) {
+      setIsHandleLocked(null);
+      return;
+    }
+    let cancelled = false;
+    fetchHandleRegistry(username)
+      .then((reg) => {
+        if (!cancelled) setIsHandleLocked(Boolean(reg));
+      })
+      .catch(() => {
+        if (!cancelled) setIsHandleLocked(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, isInitialized, username, fetchHandleRegistry]);
+
+  const handleLockExistingHandle = async () => {
+    if (!connected || !publicKey || !username) return;
+    setIsLockingHandle(true);
+    setStatusMessage(null);
+    try {
+      const { tx } = await registerExistingHandle(username);
+      setIsHandleLocked(true);
+      setStatusMessage(
+        `✅ Handle @${username} locked on-chain! Tx: ${tx.slice(0, 12)}...`
+      );
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to lock handle on-chain.";
+      setStatusMessage(`❌ ${msg}`);
+    } finally {
+      setIsLockingHandle(false);
+    }
+  };
+
   const goalPercentage = Math.min(
     Math.round((currentGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
     100
@@ -557,6 +598,35 @@ export default function CreatorDashboardPage() {
                 </>
               ) : (
                 <span>Initialize @{username} on Solana</span>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Legacy handle backfill banner (when HandleRegistry PDA is missing) */}
+        {username && connected && isInitialized && isHandleLocked === false && (
+          <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
+              <span>
+                <strong>Legacy Handle Not Locked On-Chain:</strong> Your handle{" "}
+                <strong>@{username}</strong> was created before the HandleRegistry
+                upgrade. Lock it once on Devnet so nobody else can claim{" "}
+                <strong>@{username}</strong>.
+              </span>
+            </div>
+            <button
+              onClick={handleLockExistingHandle}
+              disabled={isLockingHandle}
+              className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs tracking-wide transition-all shadow-lg flex-shrink-0 flex items-center gap-2 disabled:opacity-50"
+            >
+              {isLockingHandle ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-black" />
+                  <span>Locking handle...</span>
+                </>
+              ) : (
+                <span>Lock @{username} On-Chain</span>
               )}
             </button>
           </div>
