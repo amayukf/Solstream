@@ -78,7 +78,7 @@ Files: `src/lib/supabaseDb.ts`, API routes, `next.config.mjs`, optional `src/lib
 - Document least-privilege DB role.
 Acceptance: DB outage returns 503 with no TTS/SSE; 429 after limit; no raw DB errors; headers present; typecheck passes.
 
-## [ ] Fix 9 — Next.js upgrade
+## [x] Fix 9 — Next.js upgrade
 Files: `package.json`, `package-lock.json`, dynamic routes, ESLint config.
 - Upgrade to Next 16.4.6 + React 19 + matching types, or stop and report peer conflicts.
 - Make dynamic route `params` async and awaited.

@@ -46,10 +46,11 @@ function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
 
 export async function GET(
   req: Request,
-  context: { params: { username: string } }
+  context: { params: Promise<{ username: string }> }
 ) {
   try {
-    const username = context.params.username.trim().toLowerCase();
+    const { username: rawUsername } = await context.params;
+    const username = rawUsername.trim().toLowerCase();
     const { searchParams } = new URL(req.url);
     const fresh = searchParams.get("fresh") === "1";
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { use, useState, useEffect, useRef, useCallback } from "react";
 import { getStoredTips, getStoredCreator } from "@/lib/storage";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { GiftIcon } from "@/components/tipping/GiftIcon";
@@ -138,9 +138,10 @@ function speakFastFallback(
 export default function ObsOverlayPage({
   params,
 }: {
-  params: { username: string };
+  params: Promise<{ username: string }>;
 }) {
-  const username = params.username.toLowerCase();
+  const { username: rawUsername } = use(params);
+  const username = rawUsername.toLowerCase();
 
   const [queue, setQueue] = useState<AlertItem[]>([]);
   const [currentAlert, setCurrentAlert] = useState<AlertItem | null>(null);
@@ -155,8 +156,11 @@ export default function ObsOverlayPage({
   const playedAudioSigs = useRef<Set<string>>(new Set());
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentAlertRef = useRef<AlertItem | null>(null);
-  currentAlertRef.current = currentAlert;
   const isFirstLocalLoad = useRef(true);
+
+  useEffect(() => {
+    currentAlertRef.current = currentAlert;
+  }, [currentAlert]);
 
   const [goal, setGoal] = useState({
     title: "Stream Goal",

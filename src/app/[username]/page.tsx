@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { use, useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { PublicKey } from "@solana/web3.js";
@@ -35,9 +35,10 @@ const WalletMultiButton = dynamic(
 export default function FanTippingPage({
   params,
 }: {
-  params: { username: string };
+  params: Promise<{ username: string }>;
 }) {
-  const username = params.username.toLowerCase();
+  const { username: rawUsername } = use(params);
+  const username = rawUsername.toLowerCase();
   const { connected, publicKey } = useWallet();
   const { connection } = useConnection();
   const { sendTip, getCreatorPda, fetchCreatorAccount } = useSolStreamProgram();

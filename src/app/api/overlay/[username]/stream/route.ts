@@ -29,7 +29,7 @@ function sanitizeTipForSse(tip: OnChainTip, includeAudioUrl: boolean): OnChainTi
 
 export async function GET(
   req: Request,
-  context: { params: { username: string } }
+  context: { params: Promise<{ username: string }> }
 ) {
   const rl = checkRateLimit("sse", getClientIp(req), 20, 60_000);
   if (!rl.allowed) {
@@ -45,7 +45,8 @@ export async function GET(
     );
   }
 
-  const username = context.params.username.toLowerCase();
+  const { username: rawUsername } = await context.params;
+  const username = rawUsername.toLowerCase();
   const encoder = new TextEncoder();
 
   let cleanup = () => {};
