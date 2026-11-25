@@ -1,13 +1,26 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { SolanaMarketBoard } from "@/components/SolanaMarketBoard";
 import { getActiveHandle } from "@/lib/storage";
-import { ArrowDown, TrendingUp, TrendingDown } from "lucide-react";
+import {
+  ArrowDown,
+  TrendingUp,
+  TrendingDown,
+  Sparkles,
+  UserPlus,
+  HeartHandshake,
+  Zap,
+  ShieldCheck,
+  Globe,
+  ArrowRight,
+  LayoutDashboard,
+} from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () =>
@@ -21,19 +34,22 @@ const PREVIEW_TIERS = [
   { id: "diamond", label: "Diamond", emoji: "💎", sol: 0.05 },
 ];
 
+interface CreatorDirectoryItem {
+  username: string;
+  authority?: string;
+  goalTitle: string;
+  goalTargetLamports: number;
+  goalCurrentLamports: number;
+  totalTips: number;
+  totalVolume?: number;
+}
+
 export default function HomePage() {
   const router = useRouter();
+  const { connected, publicKey } = useWallet();
   const [handle, setHandle] = useState("");
   const [activeHandle, setActiveHandle] = useState<string | null>(null);
-  const [onChainCreators, setOnChainCreators] = useState<
-    {
-      username: string;
-      goalTitle: string;
-      goalTargetLamports: number;
-      goalCurrentLamports: number;
-      totalTips: number;
-    }[]
-  >([]);
+  const [onChainCreators, setOnChainCreators] = useState<CreatorDirectoryItem[]>([]);
   const [previewTier, setPreviewTier] = useState(PREVIEW_TIERS[2]);
   const [latestRealTip, setLatestRealTip] = useState<{
     displayName: string;
@@ -63,7 +79,8 @@ export default function HomePage() {
               if (firstTip) {
                 setLatestRealTip({
                   displayName: firstTip.displayName || "Anonymous",
-                  amountSol: (Number(firstTip.amountLamports) || 0) / 1_000_000_000,
+                  amountSol:
+                    (Number(firstTip.amountLamports) || 0) / 1_000_000_000,
                   message: firstTip.message || "",
                   signature: firstTip.signature || "",
                 });
@@ -73,6 +90,30 @@ export default function HomePage() {
       })
       .catch(() => {});
   }, []);
+
+  const myCreator = useMemo(() => {
+    if (!publicKey) return null;
+    const walletStr = publicKey.toBase58();
+    return onChainCreators.find((c) => c.authority === walletStr) || null;
+  }, [publicKey, onChainCreators]);
+
+  const networkStats = useMemo(() => {
+    const totalTips = onChainCreators.reduce(
+      (sum, c) => sum + (Number(c.totalTips) || 0),
+      0
+    );
+    const totalVolumeSol =
+      onChainCreators.reduce(
+        (sum, c) =>
+          sum + (Number(c.totalVolume ?? c.goalCurrentLamports) || 0),
+        0
+      ) / 1_000_000_000;
+    return {
+      creatorsCount: onChainCreators.length,
+      totalTips,
+      totalVolumeSol,
+    };
+  }, [onChainCreators]);
 
   const handleSolPriceLoaded = useCallback((price: number, chg: number) => {
     setSolTicker({ price, chg });
@@ -89,9 +130,12 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] selection:bg-[#9945FF] selection:text-white">
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] selection:bg-[#9945FF] selection:text-white relative overflow-hidden">
+      {/* Subtle ambient radial gradients */}
+      <div className="pointer-events-none fixed inset-x-0 top-0 h-[540px] bg-[radial-gradient(ellipse_at_top_left,rgba(153,69,255,0.14),transparent_55%),radial-gradient(ellipse_at_top_right,rgba(20,241,149,0.1),transparent_55%)]" />
+
       {/* Top Navbar */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
+      <header className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between gap-4">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-2.5">
             <SolanaLogo className="w-6 h-5" />
@@ -104,25 +148,31 @@ export default function HomePage() {
             <a href="#creators" className="hover:text-white transition-colors">
               Explore creators
             </a>
-            <a href="#markets" className="hover:text-[#14F195] transition-colors font-medium">
+            <a
+              href="#markets"
+              className="hover:text-[#14F195] transition-colors font-medium"
+            >
               Live Markets
             </a>
             <a href="#how-it-works" className="hover:text-white transition-colors">
               How it works
             </a>
-            {activeHandle && (
-              <Link href="/dashboard" className="hover:text-white transition-colors">
+            {(myCreator || activeHandle) && (
+              <Link
+                href="/dashboard"
+                className="hover:text-white transition-colors"
+              >
                 Dashboard
               </Link>
             )}
           </nav>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           {solTicker && (
             <a
               href="#markets"
-              className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 hover:border-[#14F195]/40 transition-colors text-xs font-mono tabular-nums"
+              className="hidden lg:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 hover:border-[#14F195]/40 transition-colors text-xs font-mono tabular-nums"
             >
               <span className="text-zinc-400 font-semibold">SOL</span>
               <span className="text-white font-bold">
@@ -143,12 +193,31 @@ export default function HomePage() {
               </span>
             </a>
           )}
+
+          {myCreator ? (
+            <Link
+              href="/dashboard"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14F195]/15 hover:bg-[#14F195]/25 text-[#14F195] border border-[#14F195]/30 font-bold text-xs transition-colors"
+            >
+              <LayoutDashboard className="w-3.5 h-3.5" />
+              <span>Studio (@{myCreator.username})</span>
+            </Link>
+          ) : (
+            <Link
+              href="/claim"
+              className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#9945FF]/20 hover:bg-[#9945FF]/35 text-white border border-[#9945FF]/40 font-bold text-xs transition-colors"
+            >
+              <UserPlus className="w-3.5 h-3.5 text-[#14F195]" />
+              <span>Create Profile</span>
+            </Link>
+          )}
+
           <WalletMultiButton className="!bg-[#1D1B2E] hover:!bg-[#282542] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
         </div>
       </header>
 
       {/* Hero Section */}
-      <main className="max-w-7xl mx-auto px-6 pt-10 pb-20">
+      <main className="relative z-10 max-w-7xl mx-auto px-6 pt-8 pb-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Column */}
           <div className="lg:col-span-7 space-y-6">
@@ -174,13 +243,14 @@ export default function HomePage() {
             </h1>
 
             <p className="text-base sm:text-lg text-zinc-400 max-w-xl leading-relaxed">
-              Fans anywhere tip in SOL. The money goes straight to your wallet, and
-              an alert with an AI voice reads their message live on OBS.
+              Creators claim one Solana link for their bio. Fans tip directly in
+              SOL—zero platform cut, instant wallet settlement, and live AI voice
+              alerts on OBS.
             </p>
 
             {/* Claim Handle Bar */}
-            <form onSubmit={handleClaim} className="pt-2 max-w-lg">
-              <div className="flex items-center bg-[#13141F] rounded-2xl border border-white/10 p-1.5 focus-within:border-[#9945FF] transition-all shadow-xl">
+            <form onSubmit={handleClaim} className="pt-1 max-w-lg">
+              <div className="flex items-center bg-[#13141F] rounded-2xl border border-white/15 p-1.5 focus-within:border-[#9945FF] transition-all shadow-xl">
                 <span className="pl-4 pr-1 text-zinc-500 font-mono text-sm select-none">
                   solstream.app/
                 </span>
@@ -193,23 +263,58 @@ export default function HomePage() {
                 />
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20"
+                  className="px-5 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex-shrink-0"
                 >
                   Claim your link
                 </button>
               </div>
             </form>
 
-            {/* 3 Pills Below Input */}
-            <div className="flex flex-wrap items-center gap-2.5 pt-2">
+            {/* Direct Action Buttons: Clear Creator vs. Fan Paths */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              {myCreator ? (
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
+                >
+                  <LayoutDashboard className="w-4 h-4" />
+                  <span>Open Creator Studio (@{myCreator.username})</span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              ) : (
+                <Link
+                  href="/claim"
+                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>
+                    {connected
+                      ? "Create Your Creator Profile"
+                      : "Claim Username as Creator"}
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              )}
+
+              <a
+                href="#creators"
+                className="inline-flex items-center gap-2 px-5 py-3.5 rounded-2xl bg-[#13141F] hover:bg-[#1A1C2C] text-white border border-white/10 font-bold text-xs sm:text-sm transition-all"
+              >
+                <HeartHandshake className="w-4 h-4 text-[#9945FF]" />
+                <span>Tip a Creator (No Signup)</span>
+              </a>
+            </div>
+
+            {/* 3 Feature Pills */}
+            <div className="flex flex-wrap items-center gap-2.5 pt-1">
               <span className="px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/5 text-xs text-zinc-400 font-medium">
-                Near-zero fees, no platform cut
+                0% platform cut
               </span>
               <span className="px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/5 text-xs text-zinc-400 font-medium">
-                Every tip verified on-chain
+                Verified on Solana Devnet
               </span>
               <span className="px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/5 text-xs text-zinc-400 font-medium">
-                AI voice stream alerts
+                ElevenLabs AI voice alerts
               </span>
             </div>
           </div>
@@ -309,10 +414,170 @@ export default function HomePage() {
           </div>
         </div>
 
+        {/* REAL ON-CHAIN NETWORK METRICS STRIP */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 pt-14">
+          <div className="rounded-2xl bg-[#13141F]/90 border border-white/5 px-5 py-4">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+              Active Creators
+            </div>
+            <div className="font-mono tabular-nums text-2xl font-bold text-white mt-1">
+              {networkStats.creatorsCount}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#13141F]/90 border border-white/5 px-5 py-4">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+              Verified Devnet Tips
+            </div>
+            <div className="font-mono tabular-nums text-2xl font-bold text-[#14F195] mt-1">
+              {networkStats.totalTips}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#13141F]/90 border border-white/5 px-5 py-4">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+              On-Chain Volume
+            </div>
+            <div className="font-mono tabular-nums text-2xl font-bold text-white mt-1">
+              {networkStats.totalVolumeSol.toFixed(3)} SOL
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#13141F]/90 border border-white/5 px-5 py-4">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+              Platform Cut
+            </div>
+            <div className="font-mono tabular-nums text-2xl font-bold text-[#14F195] mt-1">
+              0%
+            </div>
+          </div>
+        </div>
+
+        {/* TWO SIMPLE ROLES: CREATORS VS FANS */}
+        <section className="pt-16 space-y-6">
+          <div className="text-center max-w-2xl mx-auto space-y-2">
+            <h2 className="font-display text-2xl sm:text-3xl font-bold text-white tracking-tight">
+              Simple for Streamers. Effortless for Fans.
+            </h2>
+            <p className="text-xs sm:text-sm text-zinc-400">
+              Only creators register a handle once. Fans never create an account—just tap the link and tip.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Creator Card */}
+            <div className="rounded-3xl bg-gradient-to-br from-[#19152B] to-[#13141F] border border-[#9945FF]/35 p-7 space-y-5 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="px-3 py-1 rounded-full bg-[#9945FF]/20 text-[#D4ADFF] font-bold text-xs border border-[#9945FF]/30">
+                  For Creators &amp; Streamers
+                </span>
+                <Sparkles className="w-5 h-5 text-[#9945FF]" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-display text-xl font-bold text-white">
+                  Set up once in 30 seconds
+                </h3>
+                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                  Connect your wallet, claim <code className="text-white font-mono">@yourhandle</code> on Solana, copy your bio link and OBS Browser Source URL, and receive 100% of every tip directly.
+                </p>
+              </div>
+
+              <div className="pt-1">
+                <Link
+                  href={myCreator ? "/dashboard" : "/claim"}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs transition-all"
+                >
+                  <span>
+                    {myCreator
+                      ? `Manage @${myCreator.username} in Studio`
+                      : "Create Your Creator Profile"}
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Fan Card */}
+            <div className="rounded-3xl bg-gradient-to-br from-[#111F1D] to-[#13141F] border border-[#14F195]/30 p-7 space-y-5 shadow-xl">
+              <div className="flex items-center justify-between">
+                <span className="px-3 py-1 rounded-full bg-[#14F195]/15 text-[#14F195] font-bold text-xs border border-[#14F195]/30">
+                  For Viewers &amp; Fans
+                </span>
+                <HeartHandshake className="w-5 h-5 text-[#14F195]" />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="font-display text-xl font-bold text-white">
+                  No account required—just connect &amp; tip
+                </h3>
+                <p className="text-xs sm:text-sm text-zinc-400 leading-relaxed">
+                  Click any creator&apos;s bio link, connect Phantom or Solflare, pick a gift tier, and write a message (Amharic &amp; English supported). Your alert appears live on their stream.
+                </p>
+              </div>
+
+              <div className="pt-1">
+                <a
+                  href="#creators"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs transition-all"
+                >
+                  <span>Pick a Creator to Tip</span>
+                  <ArrowDown className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* WHY SOLSTREAM BEATS WEB2 */}
+        <section className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-12">
+          <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-[#14F195]/10 text-[#14F195] flex items-center justify-center flex-shrink-0">
+              <Zap className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-display text-sm font-bold text-white">
+                ~400ms Settlement vs 60 Days
+              </div>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Web2 platforms hold earnings for weeks. Solana confirms and delivers SOL straight to your wallet in under a second.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-[#9945FF]/15 text-[#C89BFF] flex items-center justify-center flex-shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-display text-sm font-bold text-white">
+                0% Fee vs 30%–50% Cut
+              </div>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Non-custodial Anchor CPI transfers send funds wallet-to-wallet with no middleman escrow.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 flex items-start gap-3.5">
+            <div className="w-9 h-9 rounded-xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center flex-shrink-0">
+              <Globe className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="font-display text-sm font-bold text-white">
+                Borderless &amp; Multilingual
+              </div>
+              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                Works everywhere Stripe/PayPal cannot reach—including Ethiopia—with full Amharic UTF-8 alert support.
+              </p>
+            </div>
+          </div>
+        </section>
+
         {/* Bottom 3 Steps */}
         <div
           id="how-it-works"
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-20"
+          className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-16"
         >
           <div className="p-6 rounded-2xl bg-[#13141F] border border-white/5 hover:border-[#9945FF]/30 transition-colors space-y-3">
             <div className="w-7 h-7 rounded-lg bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center font-mono font-bold text-xs">
@@ -364,15 +629,21 @@ export default function HomePage() {
                 </p>
               </div>
               <span className="text-[11px] font-mono text-[#14F195]">
-                {onChainCreators.length} on-chain profile{onChainCreators.length === 1 ? "" : "s"}
+                {onChainCreators.length} on-chain profile
+                {onChainCreators.length === 1 ? "" : "s"}
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {onChainCreators.map((c) => {
-                const targetSol = (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000;
-                const currentSol = (c.goalCurrentLamports || 0) / 1_000_000_000;
-                const pct = Math.min(Math.round((currentSol / (targetSol || 1)) * 100), 100);
+                const targetSol =
+                  (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000;
+                const currentSol =
+                  (c.goalCurrentLamports || 0) / 1_000_000_000;
+                const pct = Math.min(
+                  Math.round((currentSol / (targetSol || 1)) * 100),
+                  100
+                );
                 return (
                   <Link
                     key={c.username}
@@ -391,7 +662,8 @@ export default function HomePage() {
                             @{c.username}
                           </div>
                           <div className="text-[11px] font-mono text-zinc-500">
-                            {c.totalTips} on-chain tip{c.totalTips === 1 ? "" : "s"}
+                            {c.totalTips} on-chain tip
+                            {c.totalTips === 1 ? "" : "s"}
                           </div>
                         </div>
                       </div>
