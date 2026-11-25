@@ -27,14 +27,59 @@ const TIER_STYLES = [
   { name: "Crown", emoji: "👑", border: "#FFD700", glow: "rgba(255, 215, 0, 0.45)" },
 ];
 
-function playFastChime() {
-  try {
-    const AudioCtx =
-      window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const now = ctx.currentTime;
+const MAX_TRACKED_SIGS = 200;
+const MAX_CACHED_AUDIO = 50;
 
+function addToCappedSet(set: Set<string>, value: string, maxSize = MAX_TRACKED_SIGS) {
+  if (set.has(value)) return;
+  while (set.size >= maxSize) {
+    const oldest = set.values().next().value;
+    if (oldest === undefined) break;
+    set.delete(oldest);
+  }
+  set.add(value);
+}
+
+function setInCappedMap(
+  map: Map<string, string>,
+  key: string,
+  value: string,
+  maxSize = MAX_CACHED_AUDIO
+) {
+  if (map.has(key)) map.delete(key);
+  while (map.size >= maxSize) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+  map.set(key, value);
+}
+
+let sharedAudioCtx: AudioContext | null = null;
+
+function getSharedAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  const AudioCtx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+    sharedAudioCtx = new AudioCtx();
+  }
+  return sharedAudioCtx;
+}
+
+async function playFastChime() {
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+
+    if (ctx.state === "suspended") {
+      await ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
     const notes = [783.99, 1046.5]; // Crisp fast G5 -> C6 chime (180ms total)
     notes.forEach((freq, i) => {
       const osc = ctx.createOscillator();
@@ -46,6 +91,14 @@ function playFastChime() {
       gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.08 + 0.25);
       osc.connect(gain);
       gain.connect(ctx.destination);
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch {
+          // Ignore already disconnected nodes
+        }
+      };
       osc.start(now + i * 0.08);
       osc.stop(now + i * 0.08 + 0.28);
     });
@@ -91,6 +144,9 @@ export default function ObsOverlayPage({
   const seenSigs = useRef<Set<string>>(new Set());
   const audioBySig = useRef<Map<string, string>>(new Map());
   const playedAudioSigs = useRef<Set<string>>(new Set());
+  const activeAudioRef = useRef<HTMLAudioElement | null>(null);
+  const currentAlertRef = useRef<AlertItem | null>(null);
+  currentAlertRef.current = currentAlert;
   const isFirstLocalLoad = useRef(true);
 
   const [goal, setGoal] = useState({
@@ -98,6 +154,50 @@ export default function ObsOverlayPage({
     currentSol: 0,
     targetSol: 1.0,
   });
+
+  const cleanupAudioElement = useCallback((el?: HTMLAudioElement | null) => {
+    const target = el ?? activeAudioRef.current;
+    if (!target) return;
+    target.onended = null;
+    target.onerror = null;
+    try {
+      target.pause();
+      target.removeAttribute("src");
+      target.load();
+    } catch {
+      // Ignore cleanup errors
+    }
+    if (target === activeAudioRef.current) {
+      activeAudioRef.current = null;
+    }
+  }, []);
+
+  // Make overlay html & body transparent on mount; restore original styles on unmount
+  useEffect(() => {
+    const htmlEl = document.documentElement;
+    const bodyEl = document.body;
+    const prevHtmlBg = htmlEl.style.background;
+    const prevHtmlBgColor = htmlEl.style.backgroundColor;
+    const prevBodyBg = bodyEl.style.background;
+    const prevBodyBgColor = bodyEl.style.backgroundColor;
+
+    htmlEl.classList.add("obs-transparent");
+    bodyEl.classList.add("obs-transparent");
+    htmlEl.style.background = "transparent";
+    htmlEl.style.backgroundColor = "transparent";
+    bodyEl.style.background = "transparent";
+    bodyEl.style.backgroundColor = "transparent";
+
+    return () => {
+      cleanupAudioElement();
+      htmlEl.classList.remove("obs-transparent");
+      bodyEl.classList.remove("obs-transparent");
+      htmlEl.style.background = prevHtmlBg;
+      htmlEl.style.backgroundColor = prevHtmlBgColor;
+      bodyEl.style.background = prevBodyBg;
+      bodyEl.style.backgroundColor = prevBodyBgColor;
+    };
+  }, [cleanupAudioElement]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -143,7 +243,7 @@ export default function ObsOverlayPage({
     (rawTip: any) => {
       const item = toAlertItem(rawTip);
       if (item.audioDataUrl) {
-        audioBySig.current.set(item.signature, item.audioDataUrl);
+        setInCappedMap(audioBySig.current, item.signature, item.audioDataUrl);
       }
 
       setLatestTip(item);
@@ -158,7 +258,7 @@ export default function ObsOverlayPage({
         return;
       }
 
-      seenSigs.current.add(item.signature);
+      addToCappedSet(seenSigs.current, item.signature);
       setQueue((prev) => [...prev, item]);
       setGoal((prev) => ({
         ...prev,
@@ -177,7 +277,7 @@ export default function ObsOverlayPage({
     const creator = getStoredCreator(username);
     const localTips = getStoredTips(username);
     if (isFirstLocalLoad.current) {
-      localTips.forEach((t) => seenSigs.current.add(t.signature));
+      localTips.forEach((t) => addToCappedSet(seenSigs.current, t.signature));
       if (localTips.length > 0) {
         setLatestTip(toAlertItem(localTips[0]));
       }
@@ -218,7 +318,7 @@ export default function ObsOverlayPage({
           });
         }
         const initTips: any[] = data?.tips || [];
-        initTips.forEach((t) => seenSigs.current.add(t.signature));
+        initTips.forEach((t) => addToCappedSet(seenSigs.current, t.signature));
         if (initTips.length > 0) {
           setLatestTip(toAlertItem(initTips[0]));
           setStats((prev) => ({
@@ -340,74 +440,108 @@ export default function ObsOverlayPage({
     };
   }, [username, enqueueIncomingTip]);
 
-  // 3. FIFO Alert Queue Processor & Ultra-Fast Audio Trigger
+  // 3a. FIFO Queue Promotion (removes promoted item by id; never clears timers)
   useEffect(() => {
-    if (!currentAlert && queue.length > 0) {
-      const nextAlert = queue[0];
-      setQueue((prev) => prev.slice(1));
-      setCurrentAlert(nextAlert);
-      playFastChime();
-
-      // Wait briefly (220ms) if audioDataUrl hasn't arrived yet via SSE so ElevenLabs speaks first
-      const audioTimer = setTimeout(() => {
-        if (playedAudioSigs.current.has(nextAlert.signature)) return;
-        playedAudioSigs.current.add(nextAlert.signature);
-
-        const cachedAudio =
-          nextAlert.audioDataUrl ||
-          audioBySig.current.get(nextAlert.signature) ||
-          null;
-
-        if (cachedAudio) {
-          const audio = new Audio(cachedAudio);
-          audio.playbackRate = 1.05;
-          audio.play().catch(() => {
-            speakFastFallback(
-              nextAlert.displayName,
-              nextAlert.amountSol,
-              nextAlert.message
-            );
-          });
-        } else {
-          speakFastFallback(
-            nextAlert.displayName,
-            nextAlert.amountSol,
-            nextAlert.message
-          );
-        }
-      }, 220);
-
-      const dismissTimer = setTimeout(() => {
-        setCurrentAlert(null);
-      }, 7000);
-
-      return () => {
-        clearTimeout(audioTimer);
-        clearTimeout(dismissTimer);
-      };
-    }
+    if (currentAlert || queue.length === 0) return;
+    const nextAlert = queue[0];
+    setQueue((prev) => prev.filter((item) => item.id !== nextAlert.id));
+    setCurrentAlert(nextAlert);
   }, [currentAlert, queue]);
 
-  // If ElevenLabs audio arrives while alert is active and speech hasn't played it yet
+  // Helper to play Audio element cleanly and fall back on playback failure
+  const playTipAudio = useCallback(
+    (audioUrl: string, alert: AlertItem, allowSpeechFallback: boolean) => {
+      cleanupAudioElement();
+      const audio = new Audio(audioUrl);
+      audio.playbackRate = 1.05;
+      activeAudioRef.current = audio;
+
+      audio.onended = () => cleanupAudioElement(audio);
+      audio.onerror = () => {
+        cleanupAudioElement(audio);
+        if (allowSpeechFallback) {
+          speakFastFallback(alert.displayName, alert.amountSol, alert.message);
+        }
+      };
+
+      audio.play().catch(() => {
+        cleanupAudioElement(audio);
+        if (allowSpeechFallback) {
+          speakFastFallback(alert.displayName, alert.amountSol, alert.message);
+        }
+      });
+    },
+    [cleanupAudioElement]
+  );
+
+  // 3b. 7-second Dismiss Timer keyed strictly to currentAlert?.id
+  useEffect(() => {
+    if (!currentAlert?.id) return;
+    const dismissTimer = setTimeout(() => {
+      setCurrentAlert(null);
+    }, 7000);
+    return () => clearTimeout(dismissTimer);
+  }, [currentAlert?.id]);
+
+  // 3c. Chime + 220ms Audio Trigger keyed strictly to currentAlert?.id
+  useEffect(() => {
+    const alertId = currentAlert?.id;
+    const alert = currentAlertRef.current;
+    if (!alertId || !alert) return;
+
+    void playFastChime();
+
+    const audioTimer = setTimeout(() => {
+      const latestAlert = currentAlertRef.current;
+      if (!latestAlert || latestAlert.id !== alertId) return;
+      if (playedAudioSigs.current.has(latestAlert.signature)) return;
+
+      addToCappedSet(playedAudioSigs.current, latestAlert.signature);
+
+      const cachedAudio =
+        latestAlert.audioDataUrl ||
+        audioBySig.current.get(latestAlert.signature) ||
+        null;
+
+      if (cachedAudio) {
+        playTipAudio(cachedAudio, latestAlert, true);
+      } else {
+        speakFastFallback(
+          latestAlert.displayName,
+          latestAlert.amountSol,
+          latestAlert.message
+        );
+      }
+    }, 220);
+
+    return () => {
+      clearTimeout(audioTimer);
+    };
+  }, [currentAlert?.id, playTipAudio]);
+
+  // 3d. If ElevenLabs audio arrives while alert is active and hasn't played yet
   useEffect(() => {
     if (
       currentAlert?.audioDataUrl &&
       !playedAudioSigs.current.has(currentAlert.signature)
     ) {
-      playedAudioSigs.current.add(currentAlert.signature);
-      const audio = new Audio(currentAlert.audioDataUrl);
-      audio.playbackRate = 1.05;
-      audio.play().catch(() => {});
+      addToCappedSet(playedAudioSigs.current, currentAlert.signature);
+      playTipAudio(currentAlert.audioDataUrl, currentAlert, false);
     }
-  }, [currentAlert]);
+  }, [currentAlert?.id, currentAlert?.audioDataUrl, currentAlert, playTipAudio]);
 
   const replayLatestRealTip = () => {
     if (!latestTip) return;
     const replayId = `${latestTip.signature}-replay-${Date.now()}`;
+    const cachedAudio =
+      latestTip.audioDataUrl || audioBySig.current.get(latestTip.signature) || null;
+    if (cachedAudio) {
+      setInCappedMap(audioBySig.current, replayId, cachedAudio);
+    }
     playedAudioSigs.current.delete(replayId);
     setQueue((prev) => [
       ...prev,
-      { ...latestTip, id: replayId, signature: replayId },
+      { ...latestTip, id: replayId, signature: replayId, audioDataUrl: cachedAudio },
     ]);
   };
 
@@ -454,7 +588,7 @@ export default function ObsOverlayPage({
       {/* CENTER REAL-TIME ALERT POPUP */}
       <div className="flex-1 flex items-center justify-center">
         {currentAlert && (
-          <div className="relative animate-bounce-short w-full max-w-2xl">
+          <div key={currentAlert.id} className="relative animate-bounce-short w-full max-w-2xl">
             {/* Dynamic tier ambient glow */}
             <div
               className="absolute inset-0 blur-3xl rounded-3xl opacity-70"
