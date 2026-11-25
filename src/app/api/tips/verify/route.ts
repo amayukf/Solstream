@@ -3,11 +3,15 @@ import {
   fetchVerifiedTransactionTip,
   pushVerifiedTipToMemory,
   fetchOnChainCreatorByUsername,
+  isSignatureProcessed,
+  markSignatureProcessed,
+  inflightVerify,
 } from "@/lib/solanaServer";
 import {
   getCreatorFromDb,
   upsertCreatorInDb,
   insertTipInDb,
+  hasTipSignatureInDb,
 } from "@/lib/supabaseDb";
 
 const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Adam
@@ -81,71 +85,127 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Zero-trust on-chain verification: fetch tx from Devnet RPC and decode TipEvent
-    const tip = await fetchVerifiedTransactionTip(signature);
-    if (!tip) {
-      return NextResponse.json(
-        { error: "Transaction not confirmed or did not emit a valid TipEvent" },
-        { status: 400 }
-      );
-    }
-
-    // 2. Resolve creator from Supabase or Solana Devnet and lock recipient authority
+    // 1. Resolve creator first (DB lookup -> fallback to Solana Devnet -> 404 if absent)
     let dbCreator = await getCreatorFromDb(username);
+    let chainCreator = null;
     if (!dbCreator) {
-      const chainCreator = await fetchOnChainCreatorByUsername(username);
+      chainCreator = await fetchOnChainCreatorByUsername(username);
       if (chainCreator) {
         dbCreator = await upsertCreatorInDb(chainCreator);
       }
     }
 
-    if (dbCreator && dbCreator.authority !== tip.creator) {
+    const resolvedCreator = dbCreator || chainCreator;
+    if (!resolvedCreator) {
       return NextResponse.json(
-        { error: "Tip recipient does not match creator authority" },
+        { error: "Creator not found" },
+        { status: 404 }
+      );
+    }
+
+    // 2. Strict zero-trust verification: Solstream send_tip instruction + PDA + signer + scoped TipEvent + creator authority match
+    const tip = await fetchVerifiedTransactionTip(
+      signature,
+      resolvedCreator.authority
+    );
+    if (!tip) {
+      return NextResponse.json(
+        { error: "Transaction is invalid, unconfirmed, or not a matching Solstream tip" },
         { status: 400 }
       );
     }
 
-    // 3. Internalized ElevenLabs TTS (only executes after on-chain verification passes)
-    const solAmount = (tip.amountLamports / 1_000_000_000).toFixed(3);
-    const cleanMsg = sanitizeForTts(tip.message || "");
-    const speechScript = `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`;
-
-    const voiceId = dbCreator?.voiceId || DEFAULT_VOICE_ID;
-    const ttsEngine = process.env.ELEVENLABS_API_KEY
-      ? "elevenlabs"
-      : "browser-speech";
-    const audioDataUrl = await generateElevenLabsDataUrl(voiceId, speechScript);
-
-    const verifiedTip = {
-      ...tip,
-      audioDataUrl,
-    };
-
-    // 4. Persist verified tip into Supabase Postgres (triggers Supabase Realtime postgres_changes)
-    let savedToSupabase = false;
-    if (dbCreator?.id) {
-      const dbResult = await insertTipInDb(
-        dbCreator.id,
-        username,
-        verifiedTip,
-        audioDataUrl ? "elevenlabs" : "browser-speech"
-      );
-      savedToSupabase = dbResult.inserted || true;
+    // 3. Coalesce concurrent calls & enforce idempotency before running TTS or SSE
+    const pending = inflightVerify.get(signature);
+    if (pending) {
+      await pending.catch(() => null);
+      return NextResponse.json({
+        verified: true,
+        alreadyProcessed: true,
+      });
     }
 
-    // 5. Also push to local SSE memory stream for instant local OBS notification
-    pushVerifiedTipToMemory(username, verifiedTip);
+    const alreadyInMemory = isSignatureProcessed(signature);
+    const alreadyInDb = alreadyInMemory ? true : await hasTipSignatureInDb(signature);
+    if (alreadyInMemory || alreadyInDb) {
+      markSignatureProcessed(signature);
+      return NextResponse.json({
+        verified: true,
+        alreadyProcessed: true,
+      });
+    }
 
-    return NextResponse.json({
-      verified: true,
-      savedToSupabase,
-      ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
-      tip: verifiedTip,
-    });
-  } catch (err: any) {
+    const processTask = (async () => {
+      // 4. Generate TTS only after verification + creator match + idempotency check
+      const solAmount = (tip.amountLamports / 1_000_000_000).toFixed(3);
+      const cleanMsg = sanitizeForTts(tip.message || "");
+      const speechScript = `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`;
+
+      const voiceId = resolvedCreator.voiceId || DEFAULT_VOICE_ID;
+      const ttsEngine = process.env.ELEVENLABS_API_KEY
+        ? "elevenlabs"
+        : "browser-speech";
+      const audioDataUrl = await generateElevenLabsDataUrl(
+        voiceId,
+        speechScript
+      );
+
+      const verifiedTip = {
+        ...tip,
+        audioDataUrl,
+      };
+
+      // 5. Persist into DB; push to SSE only if DB insert actually succeeded
+      const dbResult = dbCreator?.id
+        ? await insertTipInDb(
+            dbCreator.id,
+            username,
+            verifiedTip,
+            audioDataUrl ? "elevenlabs" : "browser-speech"
+          )
+        : { inserted: false, row: null };
+
+      const savedToSupabase = dbResult.inserted;
+
+      if (dbResult.inserted) {
+        markSignatureProcessed(signature);
+        pushVerifiedTipToMemory(username, verifiedTip);
+        return {
+          verified: true,
+          savedToSupabase,
+          ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
+          tip: verifiedTip,
+        };
+      }
+
+      // If insert returned false due to unique constraint conflict, treat as idempotent replay
+      if (await hasTipSignatureInDb(signature)) {
+        markSignatureProcessed(signature);
+        return {
+          verified: true,
+          alreadyProcessed: true,
+        };
+      }
+
+      return {
+        verified: true,
+        savedToSupabase,
+        ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
+        tip: verifiedTip,
+      };
+    })();
+
+    inflightVerify.set(signature, processTask);
+    try {
+      const result = await processTask;
+      return NextResponse.json(result);
+    } finally {
+      inflightVerify.delete(signature);
+    }
+  } catch (err) {
+    console.error("POST /api/tips/verify failed:", err);
     return NextResponse.json(
-      { error: err?.message || "Failed to verify on-chain tip" },
+      { error: "Failed to verify on-chain tip" },
       { status: 500 }
     );
   }

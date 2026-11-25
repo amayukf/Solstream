@@ -1,5 +1,6 @@
-import { PublicKey } from "@solana/web3.js";
-import { PROGRAM_ID, DEVNET_RPC_URL } from "@/lib/constants";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
+import bs58 from "bs58";
+import { PROGRAM_ID, DEVNET_RPC_URL, MIN_TIP_LAMPORTS } from "@/lib/constants";
 
 export interface OnChainCreator {
   pda: string;
@@ -27,7 +28,12 @@ export interface OnChainTip {
 }
 
 const CREATOR_DISC = [222, 163, 32, 169, 204, 8, 200, 32];
+export const SEND_TIP_DISC = [231, 88, 56, 242, 241, 6, 31, 59];
 const TIP_EVENT_DISC = [213, 36, 191, 50, 28, 25, 189, 252];
+const SYSTEM_PROGRAM_ID = SystemProgram.programId.toBase58();
+
+const INVOKE_LOG_RE = /^Program ([1-9A-HJ-NP-Za-km-z]+) invoke \[(\d+)\]$/;
+const EXIT_LOG_RE = /^Program ([1-9A-HJ-NP-Za-km-z]+) (?:success|failed:.*)$/;
 
 function hasDiscriminator(buf: Buffer, expected: number[]): boolean {
   if (buf.length < 8) return false;
@@ -93,57 +99,264 @@ export function decodeCreatorAccountBuffer(
   }
 }
 
-export function decodeTipEventFromLogs(
-  logs: string[] | undefined | null,
+function decodeTipEventBuffer(
+  buf: Buffer,
   signature: string,
   fallbackBlockTime?: number | null
 ): OnChainTip | null {
-  if (!logs || logs.length === 0) return null;
+  try {
+    if (!hasDiscriminator(buf, TIP_EVENT_DISC)) return null;
+    if (buf.length < 8 + 32 + 32 + 8 + 1 + 4 + 4 + 8) return null;
+
+    let offset = 8;
+    const creator = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
+    offset += 32;
+    const donor = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
+    offset += 32;
+    const amountLamports = Number(buf.readBigUInt64LE(offset));
+    offset += 8;
+    const tier = buf.readUInt8(offset);
+    offset += 1;
+
+    if (offset + 4 > buf.length) return null;
+    const nLen = buf.readUInt32LE(offset);
+    offset += 4;
+    if (nLen > 256 || offset + nLen > buf.length) return null;
+    const displayName = buf.slice(offset, offset + nLen).toString("utf8");
+    offset += nLen;
+
+    if (offset + 4 > buf.length) return null;
+    const mLen = buf.readUInt32LE(offset);
+    offset += 4;
+    if (mLen > 1024 || offset + mLen > buf.length) return null;
+    const message = buf.slice(offset, offset + mLen).toString("utf8");
+    offset += mLen;
+
+    if (offset + 8 > buf.length) return null;
+    const rawTs = Number(buf.readBigInt64LE(offset));
+    const tsSeconds =
+      rawTs || fallbackBlockTime || Math.floor(Date.now() / 1000);
+
+    return {
+      signature,
+      creator,
+      donor,
+      amountLamports,
+      tier,
+      displayName,
+      message,
+      timestamp: tsSeconds * 1000,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decodes TipEvent logs ONLY when emitted directly inside a Solstream invocation stack frame.
+ * Ignores arbitrary "Program data:" lines emitted by other programs in the transaction.
+ */
+export function decodeTipEventsForProgram(
+  logs: string[] | undefined | null,
+  signature: string,
+  fallbackBlockTime?: number | null,
+  targetProgramId: string = PROGRAM_ID.toBase58()
+): OnChainTip[] {
+  if (!logs || logs.length === 0) return [];
+  const programStack: string[] = [];
+  const events: OnChainTip[] = [];
+
   for (const log of logs) {
+    const invokeMatch = INVOKE_LOG_RE.exec(log);
+    if (invokeMatch) {
+      programStack.push(invokeMatch[1]);
+      continue;
+    }
+
+    const exitMatch = EXIT_LOG_RE.exec(log);
+    if (exitMatch) {
+      const exitedPid = exitMatch[1];
+      if (programStack[programStack.length - 1] === exitedPid) {
+        programStack.pop();
+      } else {
+        const idx = programStack.lastIndexOf(exitedPid);
+        if (idx !== -1) programStack.splice(idx);
+      }
+      continue;
+    }
+
     if (!log.startsWith("Program data: ")) continue;
+    if (programStack[programStack.length - 1] !== targetProgramId) continue;
+
     try {
       const b64 = log.slice("Program data: ".length).trim();
       const buf = Buffer.from(b64, "base64");
-      if (!hasDiscriminator(buf, TIP_EVENT_DISC)) continue;
-
-      let offset = 8;
-      const creator = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
-      offset += 32;
-      const donor = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
-      offset += 32;
-      const amountLamports = Number(buf.readBigUInt64LE(offset));
-      offset += 8;
-      const tier = buf.readUInt8(offset);
-      offset += 1;
-
-      const nLen = buf.readUInt32LE(offset);
-      offset += 4;
-      const displayName = buf.slice(offset, offset + nLen).toString("utf8");
-      offset += nLen;
-
-      const mLen = buf.readUInt32LE(offset);
-      offset += 4;
-      const message = buf.slice(offset, offset + mLen).toString("utf8");
-      offset += mLen;
-
-      const rawTs = Number(buf.readBigInt64LE(offset));
-      const tsSeconds =
-        rawTs || fallbackBlockTime || Math.floor(Date.now() / 1000);
-
-      return {
-        signature,
-        creator,
-        donor,
-        amountLamports,
-        tier,
-        displayName,
-        message,
-        timestamp: tsSeconds * 1000,
-      };
+      const decoded = decodeTipEventBuffer(buf, signature, fallbackBlockTime);
+      if (decoded) events.push(decoded);
     } catch {
       continue;
     }
   }
+
+  return events;
+}
+
+interface VerifiedSendTipIx {
+  donor: string;
+  creatorAccount: string;
+  authority: string;
+  amountLamports: number;
+  tier: number;
+}
+
+/**
+ * Strictly validates a Solana transaction as an executed Solstream `send_tip` call:
+ * 1. Transaction exists and succeeded (meta.err === null).
+ * 2. Contains a Solstream instruction whose data starts with SEND_TIP_DISC.
+ * 3. Validates IDL account layout (donor, creator_account, authority, system_program),
+ *    donor required-signer status, and creator_account PDA derivation.
+ * 4. Decodes TipEvent strictly from logs scoped to PROGRAM_ID's execution frame.
+ * 5. Enforces event.creator === authority, event.donor === donor, matching amount/tier,
+ *    and optional expectedCreatorAuthority match.
+ */
+export function verifySolstreamTipTransaction(
+  tx: any,
+  signature: string,
+  expectedCreatorAuthority?: string
+): OnChainTip | null {
+  if (!tx || !tx.meta || tx.meta.err !== null) return null;
+
+  const message = tx.transaction?.message;
+  if (!message) return null;
+
+  const staticKeys: string[] = Array.isArray(message.accountKeys)
+    ? message.accountKeys
+        .map((k: any) => (typeof k === "string" ? k : k?.pubkey))
+        .filter((k: any): k is string => typeof k === "string" && k.length > 0)
+    : [];
+
+  const loadedWritable: string[] = Array.isArray(tx.meta.loadedAddresses?.writable)
+    ? tx.meta.loadedAddresses.writable
+    : [];
+  const loadedReadonly: string[] = Array.isArray(tx.meta.loadedAddresses?.readonly)
+    ? tx.meta.loadedAddresses.readonly
+    : [];
+  const allAccountKeys = [...staticKeys, ...loadedWritable, ...loadedReadonly];
+
+  const numRequiredSignatures = Number(
+    message.header?.numRequiredSignatures ?? 0
+  );
+  if (
+    allAccountKeys.length === 0 ||
+    !Number.isInteger(numRequiredSignatures) ||
+    numRequiredSignatures <= 0
+  ) {
+    return null;
+  }
+
+  const programIdStr = PROGRAM_ID.toBase58();
+  const candidateInstructions: any[] = [
+    ...(Array.isArray(message.instructions) ? message.instructions : []),
+  ];
+  if (Array.isArray(tx.meta.innerInstructions)) {
+    for (const innerGroup of tx.meta.innerInstructions) {
+      if (Array.isArray(innerGroup?.instructions)) {
+        candidateInstructions.push(...innerGroup.instructions);
+      }
+    }
+  }
+
+  const verifiedInstructions: VerifiedSendTipIx[] = [];
+
+  for (const ix of candidateInstructions) {
+    if (typeof ix?.programIdIndex !== "number") continue;
+    if (allAccountKeys[ix.programIdIndex] !== programIdStr) continue;
+    if (!Array.isArray(ix.accounts) || ix.accounts.length < 4) continue;
+    if (typeof ix.data !== "string" || !ix.data) continue;
+
+    let ixBuf: Buffer;
+    try {
+      ixBuf = Buffer.from(bs58.decode(ix.data));
+    } catch {
+      continue;
+    }
+
+    // 8-byte discriminator + 8-byte u64 amount + 1-byte u8 tier
+    if (ixBuf.length < SEND_TIP_DISC.length + 9) continue;
+    if (!hasDiscriminator(ixBuf, SEND_TIP_DISC)) continue;
+
+    const donorIdx = ix.accounts[0];
+    const creatorAccountIdx = ix.accounts[1];
+    const authorityIdx = ix.accounts[2];
+    const systemProgramIdx = ix.accounts[3];
+
+    if (
+      !Number.isInteger(donorIdx) ||
+      donorIdx < 0 ||
+      donorIdx >= staticKeys.length ||
+      donorIdx >= numRequiredSignatures
+    ) {
+      continue;
+    }
+
+    const donor = allAccountKeys[donorIdx];
+    const creatorAccount = allAccountKeys[creatorAccountIdx];
+    const authority = allAccountKeys[authorityIdx];
+    const systemProgram = allAccountKeys[systemProgramIdx];
+
+    if (!donor || !creatorAccount || !authority || !systemProgram) continue;
+    if (systemProgram !== SYSTEM_PROGRAM_ID) continue;
+    if (expectedCreatorAuthority && authority !== expectedCreatorAuthority) {
+      continue;
+    }
+
+    try {
+      const authorityPk = new PublicKey(authority);
+      const [expectedCreatorPda] = PublicKey.findProgramAddressSync(
+        [Buffer.from("creator"), authorityPk.toBuffer()],
+        PROGRAM_ID
+      );
+      if (creatorAccount !== expectedCreatorPda.toBase58()) continue;
+    } catch {
+      continue;
+    }
+
+    const ixAmountLamports = Number(ixBuf.readBigUInt64LE(8));
+    const ixTier = ixBuf.readUInt8(16);
+    if (ixAmountLamports < MIN_TIP_LAMPORTS) continue;
+
+    verifiedInstructions.push({
+      donor,
+      creatorAccount,
+      authority,
+      amountLamports: ixAmountLamports,
+      tier: ixTier,
+    });
+  }
+
+  if (verifiedInstructions.length === 0) return null;
+
+  const scopedEvents = decodeTipEventsForProgram(
+    tx.meta.logMessages,
+    signature,
+    tx.blockTime,
+    programIdStr
+  );
+  if (scopedEvents.length === 0) return null;
+
+  for (const ix of verifiedInstructions) {
+    const matched = scopedEvents.find(
+      (ev) =>
+        ev.creator === ix.authority &&
+        ev.donor === ix.donor &&
+        ev.amountLamports === ix.amountLamports &&
+        ev.tier === ix.tier &&
+        ev.amountLamports >= MIN_TIP_LAMPORTS &&
+        (!expectedCreatorAuthority || ev.creator === expectedCreatorAuthority)
+    );
+    if (matched) return matched;
+  }
+
   return null;
 }
 
@@ -181,7 +394,9 @@ async function rpcCall(
 type OverlayListener = (tip: OnChainTip) => void;
 
 interface GlobalSolStreamStore {
-  txBySigCache: Map<string, OnChainTip | null>;
+  txBySigCache: Map<string, OnChainTip>;
+  processedSignatures: Map<string, number>;
+  inflightVerify: Map<string, Promise<{ verified: boolean; alreadyProcessed?: boolean; savedToSupabase?: boolean; ttsEngine?: string | null; tip?: OnChainTip }>>;
   creatorsCache: { items: OnChainCreator[]; fetchedAt: number } | null;
   inflightCreators: Promise<OnChainCreator[]> | null;
   tipsCache: Map<string, { items: OnChainTip[]; fetchedAt: number }>;
@@ -198,6 +413,8 @@ const store: GlobalSolStreamStore =
   globalForSolStream.__solstreamStore ??
   (globalForSolStream.__solstreamStore = {
     txBySigCache: new Map(),
+    processedSignatures: new Map(),
+    inflightVerify: new Map(),
     creatorsCache: null,
     inflightCreators: null,
     tipsCache: new Map(),
@@ -207,16 +424,40 @@ const store: GlobalSolStreamStore =
   });
 
 if (!store.txBySigCache) store.txBySigCache = new Map();
+if (!store.processedSignatures) store.processedSignatures = new Map();
+if (!store.inflightVerify) store.inflightVerify = new Map();
 if (!store.tipsCache) store.tipsCache = new Map();
 if (!store.inflightTips) store.inflightTips = new Map();
 if (!store.verifiedTipsMemory) store.verifiedTipsMemory = new Map();
 if (!store.overlayListeners) store.overlayListeners = new Map();
 
 const txBySigCache = store.txBySigCache;
+const processedSignatures = store.processedSignatures;
+export const inflightVerify = store.inflightVerify;
 const tipsCache = store.tipsCache;
 const inflightTips = store.inflightTips;
 const verifiedTipsMemory = store.verifiedTipsMemory;
 const overlayListeners = store.overlayListeners;
+
+const PROCESSED_SIG_TTL_MS = 24 * 60 * 60 * 1000;
+
+export function isSignatureProcessed(signature: string): boolean {
+  const seenAt = processedSignatures.get(signature);
+  if (!seenAt) return false;
+  if (Date.now() - seenAt > PROCESSED_SIG_TTL_MS) {
+    processedSignatures.delete(signature);
+    return false;
+  }
+  return true;
+}
+
+export function markSignatureProcessed(signature: string): void {
+  if (processedSignatures.size >= 10_000) {
+    const oldestKey = processedSignatures.keys().next().value;
+    if (oldestKey) processedSignatures.delete(oldestKey);
+  }
+  processedSignatures.set(signature, Date.now());
+}
 
 export function subscribeToOverlayAlerts(
   username: string,
@@ -334,15 +575,34 @@ export async function fetchOnChainCreatorByWallet(
 }
 
 export async function fetchVerifiedTransactionTip(
-  signature: string
+  signature: string,
+  expectedCreatorAuthority?: string
 ): Promise<OnChainTip | null> {
-  // Return immediately from immutable signature cache if already verified
+  // Reject malformed signatures cleanly before querying RPC
+  try {
+    if (bs58.decode(signature).length !== 64) return null;
+  } catch {
+    return null;
+  }
+
+  // Check verified cache while still enforcing expectedCreatorAuthority
   for (const list of Array.from(verifiedTipsMemory.values())) {
     const found = list.find((t) => t.signature === signature);
-    if (found) return found;
+    if (found) {
+      if (expectedCreatorAuthority && found.creator !== expectedCreatorAuthority) {
+        return null;
+      }
+      return found;
+    }
   }
+
   const cachedTx = txBySigCache.get(signature);
-  if (cachedTx) return cachedTx;
+  if (cachedTx) {
+    if (expectedCreatorAuthority && cachedTx.creator !== expectedCreatorAuthority) {
+      return null;
+    }
+    return cachedTx;
+  }
 
   const tx = await rpcCall("getTransaction", [
     signature,
@@ -353,15 +613,13 @@ export async function fetchVerifiedTransactionTip(
     },
   ]);
 
-  if (!tx || tx.meta?.err !== null) {
-    return null;
-  }
-
-  const tip = decodeTipEventFromLogs(
-    tx.meta?.logMessages,
+  const tip = verifySolstreamTipTransaction(
+    tx,
     signature,
-    tx.blockTime
+    expectedCreatorAuthority
   );
+
+  // Only cache the signature after all verification checks pass
   if (tip) {
     txBySigCache.set(signature, tip);
   }
@@ -424,14 +682,10 @@ export async function fetchRecentTipsForCreator(
             ],
             1
           );
-          if (tx && tx.meta?.err === null) {
-            const tip = decodeTipEventFromLogs(
-              tx.meta?.logMessages,
-              sig,
-              tx.blockTime
-            );
+          const tip = verifySolstreamTipTransaction(tx, sig);
+          if (tip) {
             txBySigCache.set(sig, tip);
-            if (tip) decodedTips.push(tip);
+            decodedTips.push(tip);
           }
         } catch {
           // Skip transient RPC error on individual historical tx

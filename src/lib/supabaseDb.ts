@@ -175,6 +175,18 @@ export async function getTipsFromDb(username: string): Promise<OnChainTip[]> {
   return res.rows.map(mapTipRow);
 }
 
+export async function hasTipSignatureInDb(
+  signature: string
+): Promise<boolean> {
+  const pool = getPool();
+  if (!pool) return false;
+  const res = await pool.query(
+    `SELECT 1 FROM public.tips WHERE signature = $1 LIMIT 1`,
+    [signature]
+  );
+  return res.rows.length > 0;
+}
+
 export async function insertTipInDb(
   creatorId: string,
   username: string,
