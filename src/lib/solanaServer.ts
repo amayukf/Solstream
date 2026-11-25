@@ -440,6 +440,25 @@ const verifiedTipsMemory = store.verifiedTipsMemory;
 const overlayListeners = store.overlayListeners;
 
 const PROCESSED_SIG_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_TX_BY_SIG_CACHE = 500;
+const MAX_TIPS_CACHE_CREATORS = 100;
+const MAX_VERIFIED_TIPS_CREATORS = 100;
+const MAX_VERIFIED_TIPS_PER_CREATOR = 50;
+
+function setBoundedMap<K, V>(
+  map: Map<K, V>,
+  key: K,
+  value: V,
+  maxSize: number
+): void {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  while (map.size > maxSize) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
 
 export function isSignatureProcessed(signature: string): boolean {
   const seenAt = processedSignatures.get(signature);
@@ -485,11 +504,16 @@ export function invalidateCreatorCache(username?: string) {
 
 export function pushVerifiedTipToMemory(username: string, tip: OnChainTip) {
   const key = username.toLowerCase();
-  txBySigCache.set(tip.signature, tip);
+  setBoundedMap(txBySigCache, tip.signature, tip, MAX_TX_BY_SIG_CACHE);
 
   const existing = verifiedTipsMemory.get(key) || [];
   const filtered = existing.filter((t) => t.signature !== tip.signature);
-  verifiedTipsMemory.set(key, [tip, ...filtered]);
+  setBoundedMap(
+    verifiedTipsMemory,
+    key,
+    [tip, ...filtered].slice(0, MAX_VERIFIED_TIPS_PER_CREATOR),
+    MAX_VERIFIED_TIPS_CREATORS
+  );
   invalidateCreatorCache(key);
 
   // Instantly notify all connected OBS Overlay SSE streams (<10ms latency)
@@ -621,14 +645,14 @@ export async function fetchVerifiedTransactionTip(
 
   // Only cache the signature after all verification checks pass
   if (tip) {
-    txBySigCache.set(signature, tip);
+    setBoundedMap(txBySigCache, signature, tip, MAX_TX_BY_SIG_CACHE);
   }
   return tip;
 }
 
 const DEFAULT_SIG_FETCH_CAP = (() => {
-  const raw = Number(process.env.SOLSTREAM_SIG_FETCH_CAP || "100");
-  if (!Number.isFinite(raw) || raw < 12) return 100;
+  const raw = Number(process.env.SOLSTREAM_SIG_FETCH_CAP || "40");
+  if (!Number.isFinite(raw) || raw < 12) return 40;
   return Math.min(Math.floor(raw), 500);
 })();
 
@@ -690,11 +714,23 @@ export async function fetchRecentTipsForCreator(
 
   const task = (async () => {
     try {
-      const validSigs = await fetchSignaturesPaginated(pda, maxSignatures);
+      const untilSignature =
+        !forceFresh && cached?.items?.length ? cached.items[0].signature : undefined;
+      const validSigs = await fetchSignaturesPaginated(
+        pda,
+        maxSignatures,
+        untilSignature
+      );
 
       if (validSigs.length === 0) {
-        tipsCache.set(key, { items: [], fetchedAt: Date.now() });
-        return memTips;
+        const retained = untilSignature ? cached?.items || [] : [];
+        setBoundedMap(
+          tipsCache,
+          key,
+          { items: retained, fetchedAt: Date.now() },
+          MAX_TIPS_CACHE_CREATORS
+        );
+        return mergeTips(memTips, retained);
       }
 
       const decodedTips: OnChainTip[] = [];
@@ -726,7 +762,7 @@ export async function fetchRecentTipsForCreator(
           );
           const tip = verifySolstreamTipTransaction(tx, sig);
           if (tip) {
-            txBySigCache.set(sig, tip);
+            setBoundedMap(txBySigCache, sig, tip, MAX_TX_BY_SIG_CACHE);
             decodedTips.push(tip);
           }
         } catch {
@@ -735,8 +771,16 @@ export async function fetchRecentTipsForCreator(
         await new Promise((r) => setTimeout(r, 200));
       }
 
-      tipsCache.set(key, { items: decodedTips, fetchedAt: Date.now() });
-      return mergeTips(memTips, decodedTips);
+      const merged = untilSignature
+        ? mergeTips(decodedTips, cached?.items || []).slice(0, maxSignatures)
+        : decodedTips;
+      setBoundedMap(
+        tipsCache,
+        key,
+        { items: merged, fetchedAt: Date.now() },
+        MAX_TIPS_CACHE_CREATORS
+      );
+      return mergeTips(memTips, merged);
     } catch (err) {
       console.warn("fetchRecentTipsForCreator RPC warning:", err);
       return mergeTips(memTips, cached?.items || []);

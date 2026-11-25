@@ -23,6 +23,23 @@ import {
   rateLimitJsonResponse,
 } from "@/lib/rateLimit";
 
+function needsCreatorDbSync(
+  db: DbCreatorRow | null,
+  chain: OnChainCreator
+): boolean {
+  if (!db) return true;
+  return (
+    db.authority !== chain.authority ||
+    db.pda !== chain.pda ||
+    db.voiceId !== chain.voiceId ||
+    db.goalTitle !== chain.goalTitle ||
+    db.goalTargetLamports !== chain.goalTargetLamports ||
+    db.goalCurrentLamports !== chain.goalCurrentLamports ||
+    db.totalTips !== chain.totalTips ||
+    db.totalVolume !== chain.totalVolume
+  );
+}
+
 function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
   const map = new Map<string, OnChainTip>();
   for (const item of [...a, ...b]) {
@@ -96,7 +113,7 @@ export async function GET(
       );
     }
 
-    if (chainCreator && dbHealthy) {
+    if (chainCreator && dbHealthy && needsCreatorDbSync(dbCreator, chainCreator)) {
       try {
         const synced = await syncCreatorExactStatsInDb(chainCreator);
         if (synced) dbCreator = synced;
@@ -166,9 +183,10 @@ export async function GET(
             console.warn(`Historical tip backfill warning for @${username}:`, err);
           }
         }
-        if (chainCreator) {
+        if (chainCreator && needsCreatorDbSync(dbCreator, chainCreator)) {
           try {
-            await syncCreatorExactStatsInDb(chainCreator);
+            const synced = await syncCreatorExactStatsInDb(chainCreator);
+            if (synced) dbCreator = synced;
           } catch (err) {
             console.warn(`Creator post-backfill sync warning:`, err);
           }
