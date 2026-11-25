@@ -420,10 +420,10 @@ export default function ObsOverlayPage({
     : TIER_STYLES[3];
 
   return (
-    <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-8 group">
+    <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-4 sm:p-8 group">
       {/* Top Status Bar: Hidden during live OBS capture, shown on hover or ?preview=1 */}
       <div
-        className={`flex items-center justify-between text-xs transition-opacity duration-300 ${
+        className={`flex flex-wrap items-center justify-between gap-2 text-xs transition-opacity duration-300 ${
           isPreviewMode ? "opacity-95" : "opacity-0 group-hover:opacity-100"
         }`}
       >
@@ -466,9 +466,9 @@ export default function ObsOverlayPage({
               className="relative rounded-3xl bg-[#0F101A]/95 border-2 overflow-hidden shadow-2xl backdrop-blur-xl"
               style={{ borderColor: activeStyle.border }}
             >
-              <div className="p-6 md:p-7 space-y-4">
+              <div className="p-4 sm:p-6 md:p-7 space-y-3 sm:space-y-4">
                 {/* Top Header: Tipper Name, Wallet, Tier & Amount */}
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
                   <div className="flex items-center gap-4 min-w-0">
                     <div
                       className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0 border"

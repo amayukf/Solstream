@@ -15,7 +15,7 @@ export const MicroTierSelector: React.FC<MicroTierSelectorProps> = ({
   solUsdPrice,
 }) => {
   return (
-    <div className="grid grid-cols-3 gap-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 sm:gap-3">
       {GIFT_TIERS.map((g) => {
         const isSelected = selectedTier.id === g.id;
         return (

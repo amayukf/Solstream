@@ -130,12 +130,12 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] selection:bg-[#9945FF] selection:text-white relative overflow-hidden">
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] selection:bg-[#9945FF] selection:text-white relative overflow-x-clip">
       {/* Subtle ambient radial gradients */}
       <div className="pointer-events-none fixed inset-x-0 top-0 h-[540px] bg-[radial-gradient(ellipse_at_top_left,rgba(153,69,255,0.14),transparent_55%),radial-gradient(ellipse_at_top_right,rgba(20,241,149,0.1),transparent_55%)]" />
 
       {/* Top Navbar */}
-      <header className="relative z-10 w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between gap-4">
+      <header className="relative z-50 w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 flex items-center justify-between gap-2 sm:gap-4">
         <div className="flex items-center gap-8">
           <Link href="/" className="flex items-center gap-2.5">
             <SolanaLogo className="w-6 h-5" />
@@ -212,12 +212,51 @@ export default function HomePage() {
             </Link>
           )}
 
-          <WalletMultiButton className="!bg-[#1D1B2E] hover:!bg-[#282542] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
+          <WalletMultiButton className="!bg-[#1D1B2E] hover:!bg-[#282542] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-3 sm:!px-4 !border !border-white/10" />
         </div>
       </header>
 
+      {/* Mobile Quick Navigation Bar */}
+      <nav className="relative z-40 max-w-7xl mx-auto px-4 pb-3 flex md:hidden items-center gap-2 overflow-x-auto">
+        {myCreator ? (
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14F195]/15 text-[#14F195] border border-[#14F195]/30 font-bold text-xs whitespace-nowrap flex-shrink-0"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5" />
+            <span>Studio</span>
+          </Link>
+        ) : (
+          <Link
+            href="/claim"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#9945FF]/20 text-white border border-[#9945FF]/40 font-bold text-xs whitespace-nowrap flex-shrink-0"
+          >
+            <UserPlus className="w-3.5 h-3.5 text-[#14F195]" />
+            <span>Create Profile</span>
+          </Link>
+        )}
+        <a
+          href="#creators"
+          className="px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 text-zinc-300 text-xs font-medium whitespace-nowrap flex-shrink-0"
+        >
+          Creators
+        </a>
+        <a
+          href="#markets"
+          className="px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 text-[#14F195] text-xs font-medium whitespace-nowrap flex-shrink-0"
+        >
+          Markets{solTicker ? ` · $${solTicker.price.toFixed(0)}` : ""}
+        </a>
+        <a
+          href="#how-it-works"
+          className="px-3 py-1.5 rounded-xl bg-[#13141F] border border-white/10 text-zinc-300 text-xs font-medium whitespace-nowrap flex-shrink-0"
+        >
+          How it works
+        </a>
+      </nav>
+
       {/* Hero Section */}
-      <main className="relative z-10 max-w-7xl mx-auto px-6 pt-8 pb-20">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-16 sm:pb-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           {/* Left Column */}
           <div className="lg:col-span-7 space-y-6">
@@ -249,21 +288,23 @@ export default function HomePage() {
             </p>
 
             {/* Claim Handle Bar */}
-            <form onSubmit={handleClaim} className="pt-1 max-w-lg">
-              <div className="flex items-center bg-[#13141F] rounded-2xl border border-white/15 p-1.5 focus-within:border-[#9945FF] transition-all shadow-xl">
-                <span className="pl-4 pr-1 text-zinc-500 font-mono text-sm select-none">
-                  solstream.app/
-                </span>
-                <input
-                  type="text"
-                  placeholder="yourhandle"
-                  value={handle}
-                  onChange={(e) => setHandle(e.target.value)}
-                  className="flex-1 bg-transparent text-white text-sm focus:outline-none placeholder-zinc-600 font-medium"
-                />
+            <form onSubmit={handleClaim} className="pt-1 max-w-lg w-full">
+              <div className="flex flex-col sm:flex-row sm:items-center bg-[#13141F] rounded-2xl border border-white/15 p-1.5 gap-2 sm:gap-0 focus-within:border-[#9945FF] transition-all shadow-xl">
+                <div className="flex items-center flex-1 min-w-0 px-2 sm:px-0 py-1.5 sm:py-0">
+                  <span className="pl-2 sm:pl-4 pr-1 text-zinc-500 font-mono text-xs sm:text-sm select-none flex-shrink-0">
+                    solstream.app/
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="yourhandle"
+                    value={handle}
+                    onChange={(e) => setHandle(e.target.value)}
+                    className="flex-1 min-w-0 bg-transparent text-white text-sm focus:outline-none placeholder-zinc-600 font-medium"
+                  />
+                </div>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex-shrink-0"
+                  className="w-full sm:w-auto px-5 py-3 sm:py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex-shrink-0"
                 >
                   Claim your link
                 </button>
@@ -271,11 +312,11 @@ export default function HomePage() {
             </form>
 
             {/* Direct Action Buttons: Clear Creator vs. Fan Paths */}
-            <div className="flex flex-wrap items-center gap-3 pt-1">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pt-1">
               {myCreator ? (
                 <Link
                   href="/dashboard"
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
+                  className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
                 >
                   <LayoutDashboard className="w-4 h-4" />
                   <span>Open Creator Studio (@{myCreator.username})</span>
@@ -284,7 +325,7 @@ export default function HomePage() {
               ) : (
                 <Link
                   href="/claim"
-                  className="inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
+                  className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
                 >
                   <UserPlus className="w-4 h-4" />
                   <span>
@@ -298,7 +339,7 @@ export default function HomePage() {
 
               <a
                 href="#creators"
-                className="inline-flex items-center gap-2 px-5 py-3.5 rounded-2xl bg-[#13141F] hover:bg-[#1A1C2C] text-white border border-white/10 font-bold text-xs sm:text-sm transition-all"
+                className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-5 py-3.5 rounded-2xl bg-[#13141F] hover:bg-[#1A1C2C] text-white border border-white/10 font-bold text-xs sm:text-sm transition-all"
               >
                 <HeartHandshake className="w-4 h-4 text-[#9945FF]" />
                 <span>Tip a Creator (No Signup)</span>
@@ -335,7 +376,7 @@ export default function HomePage() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-2.5 mb-4">
+              <div className="grid grid-cols-3 gap-1.5 sm:gap-2.5 mb-4">
                 {PREVIEW_TIERS.map((tier) => {
                   const isActive = previewTier.id === tier.id;
                   return (
@@ -343,7 +384,7 @@ export default function HomePage() {
                       key={tier.id}
                       type="button"
                       onClick={() => setPreviewTier(tier)}
-                      className={`p-2.5 rounded-xl text-center text-xs transition-all ${
+                      className={`p-2 sm:p-2.5 rounded-xl text-center text-[11px] sm:text-xs whitespace-nowrap transition-all ${
                         isActive
                           ? "bg-[#201738] border-2 border-[#9945FF] font-bold text-white shadow-lg shadow-[#9945FF]/20"
                           : "bg-black/40 border border-white/5 text-zinc-400 hover:border-white/15 hover:text-zinc-200"

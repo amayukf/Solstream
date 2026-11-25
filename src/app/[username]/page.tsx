@@ -356,9 +356,9 @@ export default function FanTippingPage({
   };
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] pb-24">
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] pb-24 overflow-x-clip">
       {/* Top Navbar */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
+      <header className="relative z-50 w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2">
             <SolanaLogo className="w-6 h-5" />
@@ -386,7 +386,7 @@ export default function FanTippingPage({
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-6 pt-4">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 pt-4">
         {isCheckingCreator && (
           <div className="mb-6 p-4 rounded-2xl bg-[#13141F] border border-white/10 text-zinc-400 text-xs flex items-center gap-2.5">
             <Loader2 className="w-4 h-4 animate-spin text-[#14F195]" />

@@ -416,13 +416,13 @@ export default function CreatorDashboardPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] pb-24">
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] pb-24 overflow-x-clip">
       {/* Top Bar */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <header className="relative z-50 w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5 sm:gap-3">
           <Link href="/" className="flex items-center gap-2">
             <SolanaLogo className="w-6 h-5" />
-            <span className="text-xl font-bold tracking-tight text-white">
+            <span className="text-lg sm:text-xl font-bold tracking-tight text-white">
               Creator Studio
             </span>
           </Link>
@@ -433,12 +433,12 @@ export default function CreatorDashboardPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2.5 sm:gap-4">
           {username && (
             <Link
               href={`/${username}`}
               target="_blank"
-              className="px-4 py-2 rounded-xl bg-[#13141F] hover:bg-[#1A1B29] text-xs font-semibold text-zinc-300 border border-white/10 transition-colors"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-[#13141F] hover:bg-[#1A1B29] text-xs font-semibold text-zinc-300 border border-white/10 transition-colors whitespace-nowrap"
             >
               View public tip page
             </Link>
@@ -456,7 +456,7 @@ export default function CreatorDashboardPage() {
       </header>
 
       {/* Main Studio Body */}
-      <main className="max-w-7xl mx-auto px-6 space-y-6">
+      <main className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 space-y-6">
         {/* Status notification */}
         {statusMessage && (
           <div className="p-3.5 rounded-2xl bg-[#13141F] border border-white/10 text-xs text-white">
@@ -529,42 +529,44 @@ export default function CreatorDashboardPage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2.5">
-                  <div className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-white truncate select-all">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                  <div className="w-full sm:flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-white truncate select-all">
                     {tipPageUrl}
                   </div>
-                  <button
-                    onClick={handleCopyTipLink}
-                    className="px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    {isBioCopied ? (
-                      <>
-                        <Check className="w-4 h-4 text-[#090A0F]" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy Link</span>
-                      </>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowQrModal(true)}
-                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-300 hover:text-[#14F195] transition-colors flex-shrink-0 border border-white/10"
-                    title="Show scannable tip QR code"
-                  >
-                    <QrCode className="w-4 h-4" />
-                  </button>
-                  <Link
-                    href={`/${username}`}
-                    target="_blank"
-                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
-                    title="Open fan tip page"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </Link>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={handleCopyTipLink}
+                      className="flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      {isBioCopied ? (
+                        <>
+                          <Check className="w-4 h-4 text-[#090A0F]" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy Link</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowQrModal(true)}
+                      className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-300 hover:text-[#14F195] transition-colors flex-shrink-0 border border-white/10"
+                      title="Show scannable tip QR code"
+                    >
+                      <QrCode className="w-4 h-4" />
+                    </button>
+                    <Link
+                      href={`/${username}`}
+                      target="_blank"
+                      className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+                      title="Open fan tip page"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </Link>
+                  </div>
                 </div>
               </div>
 
@@ -579,31 +581,33 @@ export default function CreatorDashboardPage() {
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2.5">
-                  <div className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-[#14F195] truncate select-all">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                  <div className="w-full sm:flex-1 min-w-0 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-[#14F195] truncate select-all">
                     {overlayUrl}
                   </div>
-                  <button
-                    onClick={handleCopyOverlay}
-                    className="px-4 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex items-center gap-1.5 flex-shrink-0"
-                  >
-                    {isCopied ? (
-                      <>
-                        <Check className="w-4 h-4 text-[#14F195]" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <span>Copy URL</span>
-                    )}
-                  </button>
-                  <Link
-                    href={`/overlay/${username}?preview=1`}
-                    target="_blank"
-                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
-                    title="Preview overlay with test button"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </Link>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={handleCopyOverlay}
+                      className="flex-1 sm:flex-initial justify-center px-4 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex items-center gap-1.5 flex-shrink-0"
+                    >
+                      {isCopied ? (
+                        <>
+                          <Check className="w-4 h-4 text-[#14F195]" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <span>Copy URL</span>
+                      )}
+                    </button>
+                    <Link
+                      href={`/overlay/${username}?preview=1`}
+                      target="_blank"
+                      className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+                      title="Preview overlay with test button"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </Link>
+                  </div>
                 </div>
               </div>
             </div>
@@ -655,46 +659,48 @@ export default function CreatorDashboardPage() {
               {/* Left Column: Stream Goal & Alert Voice (6 cols) */}
               <div className="lg:col-span-6 space-y-6">
                 {/* Stream Goal Card */}
-                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 sm:p-6">
                   <h2 className="text-sm font-bold text-white mb-4">Stream goal</h2>
-                  <form onSubmit={handleUpdateGoal} className="flex items-center gap-3">
+                  <form onSubmit={handleUpdateGoal} className="flex flex-col sm:flex-row sm:items-center gap-3">
                     <input
                       type="text"
                       value={goalTitle}
                       onChange={(e) => setGoalTitle(e.target.value)}
-                      className="flex-1 bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
+                      className="w-full sm:flex-1 min-w-0 bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
                     />
-                    <div className="w-28 flex items-center bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 focus-within:border-[#9945FF]">
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0.1"
-                        value={goalTargetSol}
-                        onChange={(e) => setGoalTargetSol(e.target.value)}
-                        className="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
-                      />
-                      <span className="text-[11px] font-mono text-zinc-500 ml-1 select-none">
-                        SOL
-                      </span>
+                    <div className="flex items-center gap-3">
+                      <div className="flex-1 sm:w-28 flex items-center bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 focus-within:border-[#9945FF]">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0.1"
+                          value={goalTargetSol}
+                          onChange={(e) => setGoalTargetSol(e.target.value)}
+                          className="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
+                        />
+                        <span className="text-[11px] font-mono text-zinc-500 ml-1 select-none">
+                          SOL
+                        </span>
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={isUpdatingGoal || !connected || !isInitialized}
+                        className="px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs leading-none text-center flex-shrink-0 disabled:opacity-50"
+                      >
+                        {isUpdatingGoal ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-[#090A0F]" />
+                        ) : (
+                          <span>Save on-chain</span>
+                        )}
+                      </button>
                     </div>
-                    <button
-                      type="submit"
-                      disabled={isUpdatingGoal || !connected || !isInitialized}
-                      className="px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs leading-none text-center flex-shrink-0 disabled:opacity-50"
-                    >
-                      {isUpdatingGoal ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-[#090A0F]" />
-                      ) : (
-                        <span>Save on-chain</span>
-                      )}
-                    </button>
                   </form>
                 </div>
 
                 {/* Alert Voice Card */}
-                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 sm:p-6">
                   <h2 className="text-sm font-bold text-white mb-4">Alert voice</h2>
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {VOICES.map((v) => {
                       const isSelected = selectedVoice === v.id;
                       return (
@@ -777,11 +783,11 @@ export default function CreatorDashboardPage() {
                             const solscanUrl = `https://solscan.io/tx/${t.signature}?cluster=devnet`;
                             return (
                               <tr key={t.signature}>
-                                <td className="py-3 font-mono font-bold text-white">
+                                <td className="py-3 pr-3 font-mono font-bold text-white whitespace-nowrap">
                                   {solAmt} SOL
                                 </td>
-                                <td className="py-3 font-semibold">{t.displayName}</td>
-                                <td className="py-3 text-zinc-400 italic max-w-xs truncate">
+                                <td className="py-3 pr-3 font-semibold whitespace-nowrap">{t.displayName}</td>
+                                <td className="py-3 pr-3 text-zinc-400 italic max-w-[140px] sm:max-w-xs truncate">
                                   &ldquo;{t.message}&rdquo;
                                 </td>
                                 <td className="py-3 text-right">

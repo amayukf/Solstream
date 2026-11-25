@@ -199,7 +199,7 @@ function ClaimHandleForm() {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
       {/* Left Column: Heading & Stepper */}
       <div className="lg:col-span-5 space-y-6">
         <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
@@ -421,9 +421,9 @@ export default function ClaimHandlePage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC]">
+    <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] overflow-x-clip">
       {/* Top Bar */}
-      <header className="w-full max-w-7xl mx-auto px-6 py-6 flex items-center justify-between">
+      <header className="relative z-50 w-full max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-wrap items-center justify-between gap-3">
         <Link href="/" className="flex items-center gap-2.5">
           <SolanaLogo className="w-6 h-5" />
           <span className="text-xl font-bold tracking-tight text-white">
@@ -444,7 +444,7 @@ export default function ClaimHandlePage() {
       </header>
 
       {/* Main Setup Content wrapped in Suspense */}
-      <main className="max-w-6xl mx-auto px-6 py-12">
+      <main className="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-8 sm:py-12">
         <Suspense fallback={<div className="text-center py-20 text-zinc-500">Loading profile setup...</div>}>
           <ClaimHandleForm />
         </Suspense>
