@@ -9,6 +9,7 @@ import {
   getTipsFromDb,
   normalizeAudioUrl,
 } from "@/lib/supabaseDb";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,20 @@ export async function GET(
   req: Request,
   context: { params: { username: string } }
 ) {
+  const rl = checkRateLimit("sse", getClientIp(req), 20, 60_000);
+  if (!rl.allowed) {
+    return new Response(
+      JSON.stringify({ error: "Too many stream connections" }),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(rl.retryAfterSeconds),
+        },
+      }
+    );
+  }
+
   const username = context.params.username.toLowerCase();
   const encoder = new TextEncoder();
 

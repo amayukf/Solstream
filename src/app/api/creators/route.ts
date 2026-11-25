@@ -9,10 +9,22 @@ import {
   isPostgresUniqueViolation,
   type DbCreatorRow,
 } from "@/lib/supabaseDb";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitJsonResponse,
+} from "@/lib/rateLimit";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const fresh = searchParams.get("fresh") === "1";
+
+  if (fresh) {
+    const rl = checkRateLimit("creators_fresh", getClientIp(req), 10, 60_000);
+    if (!rl.allowed) {
+      return rateLimitJsonResponse(rl.retryAfterSeconds);
+    }
+  }
 
   let dbCreators: DbCreatorRow[] = [];
   let dbHealthy = false;

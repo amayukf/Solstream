@@ -1,3 +1,4 @@
+import fs from "fs";
 import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
 import type { OnChainCreator, OnChainTip } from "@/lib/solanaServer";
@@ -6,6 +7,39 @@ const globalForPg = globalThis as unknown as {
   __solstreamPgPool?: Pool;
 };
 
+function resolveSslConfig(connStr: string): false | { rejectUnauthorized: true; ca?: string } {
+  const isLocalHost =
+    /\/\/[^/]*@(localhost|127\.0\.0\.1)(:|\/|$)/i.test(connStr) ||
+    connStr.includes("@localhost") ||
+    connStr.includes("@127.0.0.1");
+
+  if (isLocalHost && !/sslmode=require/i.test(connStr)) {
+    return false;
+  }
+
+  const inlineCa = process.env.DATABASE_SSL_CA?.trim();
+  if (inlineCa) {
+    return {
+      rejectUnauthorized: true,
+      ca: inlineCa.replace(/\\n/g, "\n"),
+    };
+  }
+
+  const certPath = process.env.PGSSLROOTCERT?.trim();
+  if (certPath) {
+    try {
+      return {
+        rejectUnauthorized: true,
+        ca: fs.readFileSync(certPath, "utf8"),
+      };
+    } catch (err) {
+      console.warn("Failed to read PGSSLROOTCERT:", err);
+    }
+  }
+
+  return { rejectUnauthorized: true };
+}
+
 function getPool(): Pool | null {
   const connStr = process.env.DATABASE_URL;
   if (!connStr) return null;
@@ -13,13 +47,25 @@ function getPool(): Pool | null {
   if (!globalForPg.__solstreamPgPool) {
     globalForPg.__solstreamPgPool = new Pool({
       connectionString: connStr,
-      ssl: { rejectUnauthorized: false },
+      ssl: resolveSslConfig(connStr),
       max: 10,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 8_000,
     });
   }
   return globalForPg.__solstreamPgPool;
+}
+
+export async function ensureDbReady(): Promise<boolean> {
+  const pool = getPool();
+  if (!pool) return false;
+  try {
+    await pool.query("SELECT 1");
+    return true;
+  } catch (err) {
+    console.error("Database readiness check failed:", err);
+    return false;
+  }
 }
 
 export interface DbCreatorRow extends OnChainCreator {

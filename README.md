@@ -74,3 +74,16 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
    ```
 
 4. Open [http://localhost:3000](http://localhost:3000) and connect your Phantom wallet switched to **Solana Devnet**.
+
+---
+
+## 🔒 Security & Least-Privilege Database Role
+
+- **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Provide the Supabase root CA via `DATABASE_SSL_CA` or `PGSSLROOTCERT` for hosted Postgres pooler connections.
+- **Least-Privilege DB Role:** Create a dedicated non-superuser role (`solstream_app`) with access limited to `public.creators` and `public.tips` (no `CREATE`, `DROP`, `ALTER`, or `TRUNCATE`):
+  ```sql
+  CREATE ROLE solstream_app WITH LOGIN PASSWORD 'REPLACE_WITH_STRONG_PASSWORD' NOBYPASSRLS;
+  GRANT USAGE ON SCHEMA public TO solstream_app;
+  GRANT SELECT, INSERT, UPDATE ON TABLE public.creators, public.tips TO solstream_app;
+  ```
+- **API Rate Limits & Fail-Closed Verify:** `POST /api/tips/verify` fails closed (`503`) if the database is unavailable (without running TTS or SSE), and rate limits protect `/api/tips/verify`, `/api/creators/register`, `?fresh=1`, `?refresh=1`, and SSE endpoints (`429`).

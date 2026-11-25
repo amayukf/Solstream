@@ -1,4 +1,9 @@
 import { NextResponse } from "next/server";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitJsonResponse,
+} from "@/lib/rateLimit";
 
 export interface CoinMarketItem {
   id: string;
@@ -185,6 +190,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const forceRefresh = searchParams.get("refresh") === "1";
 
+  if (forceRefresh) {
+    const rl = checkRateLimit("prices_refresh", getClientIp(req), 10, 60_000);
+    if (!rl.allowed) {
+      return rateLimitJsonResponse(rl.retryAfterSeconds);
+    }
+  }
+
   if (
     !forceRefresh &&
     cachedPayload &&
@@ -202,6 +214,7 @@ export async function GET(req: Request) {
     };
     return NextResponse.json(cachedPayload);
   } catch (cgErr) {
+    console.warn("CoinGecko prices lookup failed, trying Binance:", cgErr);
     try {
       const coins = await fetchFromBinance();
       cachedPayload = {
@@ -211,6 +224,7 @@ export async function GET(req: Request) {
       };
       return NextResponse.json(cachedPayload);
     } catch (binErr) {
+      console.error("GET /api/prices upstream failure:", binErr);
       if (cachedPayload) {
         return NextResponse.json(cachedPayload);
       }

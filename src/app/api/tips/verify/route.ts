@@ -13,7 +13,13 @@ import {
   insertTipInDb,
   hasTipSignatureInDb,
   uploadAlertAudioToStorage,
+  ensureDbReady,
 } from "@/lib/supabaseDb";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitJsonResponse,
+} from "@/lib/rateLimit";
 
 const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Adam
 
@@ -70,7 +76,12 @@ async function generateElevenLabsAudioBuffer(
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const rl = checkRateLimit("verify", getClientIp(req), 15, 60_000);
+    if (!rl.allowed) {
+      return rateLimitJsonResponse(rl.retryAfterSeconds);
+    }
+
+    const body = await req.json().catch(() => null);
     const signature =
       typeof body?.signature === "string" ? body.signature.trim() : "";
     const username =
@@ -82,6 +93,15 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Missing signature or username" },
         { status: 400 }
+      );
+    }
+
+    // Fail closed if database is unavailable: return 503 with no TTS or SSE
+    const dbReady = await ensureDbReady();
+    if (!dbReady) {
+      return NextResponse.json(
+        { error: "Service temporarily unavailable" },
+        { status: 503 }
       );
     }
 
@@ -100,6 +120,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "Creator not found" },
         { status: 404 }
+      );
+    }
+
+    if (!dbCreator?.id) {
+      return NextResponse.json(
+        { error: "Service temporarily unavailable" },
+        { status: 503 }
       );
     }
 

@@ -9,10 +9,20 @@ import {
   syncCreatorExactStatsInDb,
   isPostgresUniqueViolation,
 } from "@/lib/supabaseDb";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitJsonResponse,
+} from "@/lib/rateLimit";
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    const rl = checkRateLimit("register", getClientIp(req), 10, 60_000);
+    if (!rl.allowed) {
+      return rateLimitJsonResponse(rl.retryAfterSeconds);
+    }
+
+    const body = await req.json().catch(() => null);
     const walletAddress =
       typeof body?.walletAddress === "string" ? body.walletAddress.trim() : "";
 
@@ -78,7 +88,7 @@ export async function POST(req: Request) {
   } catch (err) {
     console.error("POST /api/creators/register error:", err);
     return NextResponse.json(
-      { error: "Failed to register creator in Supabase" },
+      { error: "Failed to register creator" },
       { status: 500 }
     );
   }

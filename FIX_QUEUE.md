@@ -68,7 +68,7 @@ Files: new API route, `src/lib/solanaServer.ts`, `src/lib/supabaseDb.ts`, `src/a
 - Background ingestion does not generate TTS.
 Acceptance: direct on-chain tip appears without the verify call; failed verify retries; no duplicate counters; unauthorized calls rejected; typecheck passes.
 
-## [ ] Fix 8 — Security hardening
+## [x] Fix 8 — Security hardening
 Files: `src/lib/supabaseDb.ts`, API routes, `next.config.mjs`, optional `src/lib/rateLimit.ts`.
 - Remove `ssl: { rejectUnauthorized: false }`.
 - Fail closed: DB unavailable => verify returns 503, no TTS/SSE.

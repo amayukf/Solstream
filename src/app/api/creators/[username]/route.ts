@@ -17,6 +17,11 @@ import {
   type DbCreatorRow,
   type DbLeaderboardEntry,
 } from "@/lib/supabaseDb";
+import {
+  checkRateLimit,
+  getClientIp,
+  rateLimitJsonResponse,
+} from "@/lib/rateLimit";
 
 function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
   const map = new Map<string, OnChainTip>();
@@ -47,6 +52,13 @@ export async function GET(
     const username = context.params.username.trim().toLowerCase();
     const { searchParams } = new URL(req.url);
     const fresh = searchParams.get("fresh") === "1";
+
+    if (fresh) {
+      const rl = checkRateLimit("creators_fresh", getClientIp(req), 10, 60_000);
+      if (!rl.allowed) {
+        return rateLimitJsonResponse(rl.retryAfterSeconds);
+      }
+    }
 
     let dbCreator: DbCreatorRow | null = null;
     let dbHealthy = false;
