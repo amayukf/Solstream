@@ -100,14 +100,15 @@ export function cacheCreatorProfile(profile: CreatorProfile): void {
       createdAt: profile.createdAt || Date.now(),
     };
 
-    const entries = Object.entries(creators);
-    if (entries.length > MAX_STORED_CREATORS) {
-      entries.sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
-      while (entries.length > MAX_STORED_CREATORS) {
-        const oldest = entries.shift();
-        if (oldest && oldest[0] !== cleanUsername) {
-          delete creators[oldest[0]];
-        }
+    let excess = Object.keys(creators).length - MAX_STORED_CREATORS;
+    if (excess > 0) {
+      const evictable = Object.entries(creators)
+        .filter(([key]) => key !== cleanUsername)
+        .sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0));
+      for (const [key] of evictable) {
+        if (excess <= 0) break;
+        delete creators[key];
+        excess--;
       }
     }
 
