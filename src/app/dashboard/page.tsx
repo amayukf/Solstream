@@ -434,32 +434,52 @@ export default function CreatorDashboardPage() {
   };
 
   const handleSelectVoice = async (voiceId: string) => {
-    setSelectedVoice(voiceId);
-    if (username && publicKey) {
-      saveStoredCreator(
-        {
-          username,
-          authority: publicKey.toBase58(),
-          voiceId,
-          goalTitle,
-          goalTargetLamports: Math.round((parseFloat(goalTargetSol) || 3.0) * 1_000_000_000),
-          goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
-          createdAt: Date.now(),
-        },
-        publicKey.toBase58()
-      );
+    const previousVoice = selectedVoice;
+    if (voiceId === previousVoice) return;
+
+    const persistVoiceLocally = (targetVoice: string) => {
+      if (username && publicKey) {
+        saveStoredCreator(
+          {
+            username,
+            authority: publicKey.toBase58(),
+            voiceId: targetVoice,
+            goalTitle,
+            goalTargetLamports: Math.round(
+              (parseFloat(goalTargetSol) || 3.0) * 1_000_000_000
+            ),
+            goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
+            createdAt: Date.now(),
+          },
+          publicKey.toBase58()
+        );
+      }
+    };
+
+    // Pre-initialization: allow picking a voice locally before creating the on-chain account
+    if (!connected || !isInitialized || !publicKey) {
+      setSelectedVoice(voiceId);
+      persistVoiceLocally(voiceId);
+      return;
     }
-    if (!connected || !isInitialized || !publicKey) return;
+
+    setSelectedVoice(voiceId);
+    setStatusMessage(null);
     try {
       await updateVoice(voiceId);
+      persistVoiceLocally(voiceId);
       await fetch("/api/creators/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
       }).catch(() => {});
       setStatusMessage("✅ Voice persona updated on-chain!");
-    } catch (e) {
-      console.log("Voice updated locally:", e);
+    } catch (err: unknown) {
+      setSelectedVoice(previousVoice);
+      persistVoiceLocally(previousVoice);
+      const msg =
+        err instanceof Error ? err.message : "Failed to update voice on-chain.";
+      setStatusMessage(`❌ Error: ${msg}`);
     }
   };
 
