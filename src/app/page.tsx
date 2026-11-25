@@ -25,6 +25,15 @@ export default function HomePage() {
   const router = useRouter();
   const [handle, setHandle] = useState("");
   const [activeHandle, setActiveHandle] = useState<string | null>(null);
+  const [onChainCreators, setOnChainCreators] = useState<
+    {
+      username: string;
+      goalTitle: string;
+      goalTargetLamports: number;
+      goalCurrentLamports: number;
+      totalTips: number;
+    }[]
+  >([]);
   const [previewTier, setPreviewTier] = useState(PREVIEW_TIERS[2]);
   const [solTicker, setSolTicker] = useState<{
     price: number;
@@ -34,6 +43,15 @@ export default function HomePage() {
   useEffect(() => {
     const stored = getActiveHandle();
     if (stored) setActiveHandle(stored);
+
+    fetch("/api/creators")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.creators)) {
+          setOnChainCreators(data.creators);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleSolPriceLoaded = useCallback((price: number, chg: number) => {
@@ -63,6 +81,9 @@ export default function HomePage() {
           </Link>
 
           <nav className="hidden md:flex items-center gap-6 text-sm text-zinc-400">
+            <a href="#creators" className="hover:text-white transition-colors">
+              Explore creators
+            </a>
             <a href="#markets" className="hover:text-[#14F195] transition-colors font-medium">
               Live Markets
             </a>
@@ -74,12 +95,6 @@ export default function HomePage() {
                 Dashboard
               </Link>
             )}
-            <Link
-              href={activeHandle ? `/${activeHandle}` : "/claim"}
-              className="hover:text-white transition-colors"
-            >
-              {activeHandle ? `@${activeHandle}` : "Explore creators"}
-            </Link>
           </nav>
         </div>
 
@@ -305,6 +320,78 @@ export default function HomePage() {
             </p>
           </div>
         </div>
+
+        {/* LIVE ON-CHAIN CREATORS DIRECTORY (Zero signup required for fans) */}
+        {onChainCreators.length > 0 && (
+          <section id="creators" className="pt-20 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+              <div>
+                <h2 className="font-display text-2xl font-bold text-white tracking-tight">
+                  Active Creators on Solana Devnet
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-400">
+                  Pick any creator below — connect your Solana wallet and tip directly with zero account creation.
+                </p>
+              </div>
+              <span className="text-[11px] font-mono text-[#14F195]">
+                {onChainCreators.length} on-chain profile{onChainCreators.length === 1 ? "" : "s"}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {onChainCreators.map((c) => {
+                const targetSol = (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000;
+                const currentSol = (c.goalCurrentLamports || 0) / 1_000_000_000;
+                const pct = Math.min(Math.round((currentSol / (targetSol || 1)) * 100), 100);
+                return (
+                  <Link
+                    key={c.username}
+                    href={`/${c.username}`}
+                    className="p-5 rounded-2xl bg-[#13141F] border border-white/10 hover:border-[#14F195]/50 transition-all group space-y-4 shadow-xl"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#9945FF] to-[#14F195] p-0.5">
+                          <div className="w-full h-full rounded-full bg-[#0B0C10] flex items-center justify-center font-display font-bold text-sm text-white uppercase">
+                            {c.username.slice(0, 1)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="font-display font-bold text-base text-white group-hover:text-[#14F195] transition-colors">
+                            @{c.username}
+                          </div>
+                          <div className="text-[11px] font-mono text-zinc-500">
+                            {c.totalTips} on-chain tip{c.totalTips === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="px-3 py-1 rounded-xl bg-[#14F195]/10 text-[#14F195] font-bold text-xs border border-[#14F195]/20 group-hover:bg-[#14F195] group-hover:text-[#090A0F] transition-colors">
+                        Tip Now →
+                      </span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-zinc-400 font-medium truncate pr-2">
+                          Goal: {c.goalTitle}
+                        </span>
+                        <span className="font-mono text-white font-semibold">
+                          {currentSol.toFixed(3)} / {targetSol.toFixed(1)} SOL
+                        </span>
+                      </div>
+                      <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-[#9945FF] to-[#14F195]"
+                          style={{ width: `${Math.max(pct, 4)}%` }}
+                        />
+                      </div>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        )}
 
         {/* LIVE SOLANA & ECOSYSTEM COIN PRICE LIST */}
         <SolanaMarketBoard onSolPriceLoaded={handleSolPriceLoaded} />

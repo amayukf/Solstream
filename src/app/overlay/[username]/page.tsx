@@ -56,7 +56,9 @@ export default function ObsOverlayPage({
 
   // Track already seen/played tip signatures
   const seenSigs = useRef<Set<string>>(new Set());
-  const isFirstLoad = useRef(true);
+  const isFirstLocalLoad = useRef(true);
+  const isFirstRemoteLoad = useRef(true);
+  const isFetchingRemote = useRef(false);
 
   // Goal state
   const [goal, setGoal] = useState({
@@ -81,23 +83,21 @@ export default function ObsOverlayPage({
     }
   }, [username]);
 
-  // Load creator goal
+  // Load creator goal initially from localStorage
   useEffect(() => {
     refreshGoal();
   }, [refreshGoal]);
 
-  // Check for new tips from localStorage
-  const checkTips = useCallback(() => {
+  // Fast localStorage tip check (for same-browser testing)
+  const checkLocalTips = useCallback(() => {
     const storedTips = getStoredTips(username);
 
-    // If first load, mark existing tips as already seen so we only alert NEW incoming tips
-    if (isFirstLoad.current) {
+    if (isFirstLocalLoad.current) {
       storedTips.forEach((t) => seenSigs.current.add(t.signature));
-      isFirstLoad.current = false;
+      isFirstLocalLoad.current = false;
       return;
     }
 
-    // Find any new tips not yet seen
     const newTips = storedTips.filter((t) => !seenSigs.current.has(t.signature));
     if (newTips.length > 0) {
       newTips.forEach((t) => seenSigs.current.add(t.signature));
@@ -117,30 +117,79 @@ export default function ObsOverlayPage({
     }
   }, [username, refreshGoal]);
 
+  // Cross-device Solana Devnet polling (so OBS Studio & remote browsers sync cleanly)
+  const checkRemoteTips = useCallback(async () => {
+    if (isFetchingRemote.current) return;
+    isFetchingRemote.current = true;
+    try {
+      const res = await fetch(`/api/creators/${encodeURIComponent(username)}`, {
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+
+      if (data?.creator) {
+        const c = data.creator;
+        setGoal({
+          title: c.goalTitle || "Stream Goal",
+          currentSol: (c.goalCurrentLamports || 0) / 1_000_000_000,
+          targetSol: (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
+        });
+      }
+
+      const remoteTips: any[] = data?.tips || [];
+      if (isFirstRemoteLoad.current) {
+        remoteTips.forEach((t) => seenSigs.current.add(t.signature));
+        isFirstRemoteLoad.current = false;
+        return;
+      }
+
+      const newTips = remoteTips.filter((t) => !seenSigs.current.has(t.signature));
+      if (newTips.length > 0) {
+        newTips.forEach((t) => seenSigs.current.add(t.signature));
+        const newAlerts: AlertItem[] = newTips.map((t) => ({
+          id: t.signature,
+          signature: t.signature,
+          displayName: t.displayName || "Anonymous",
+          amountSol: (Number(t.amountLamports) || 0) / 1_000_000_000,
+          tier: typeof t.tier === "number" ? t.tier : 3,
+          tierName: TIER_NAMES[t.tier] || "Tip",
+          message: t.message || "",
+        }));
+        setQueue((prev) => [...prev, ...newAlerts]);
+      }
+    } catch {
+      // Transient RPC error ignored gracefully
+    } finally {
+      isFetchingRemote.current = false;
+    }
+  }, [username]);
+
   useEffect(() => {
-    checkTips();
+    checkLocalTips();
+    checkRemoteTips();
 
-    // Poll every 1s for instant detection across any tab/process
-    const timer = setInterval(checkTips, 1000);
+    const localTimer = setInterval(checkLocalTips, 1000);
+    const remoteTimer = setInterval(checkRemoteTips, 2500);
 
-    // Also listen to storage & custom event
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === `solstream_tips_${username}`) checkTips();
+      if (e.key === `solstream_tips_${username}`) checkLocalTips();
       if (e.key === "solstream_creators") refreshGoal();
     };
     const handleCustom = (e: any) => {
-      if (e.detail?.username === username) checkTips();
+      if (e.detail?.username === username) checkLocalTips();
     };
 
     window.addEventListener("storage", handleStorage);
     window.addEventListener("solstream_new_tip", handleCustom);
 
     return () => {
-      clearInterval(timer);
+      clearInterval(localTimer);
+      clearInterval(remoteTimer);
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("solstream_new_tip", handleCustom);
     };
-  }, [checkTips, refreshGoal, username]);
+  }, [checkLocalTips, checkRemoteTips, refreshGoal, username]);
 
   // FIFO Alert Queue Processor
   useEffect(() => {

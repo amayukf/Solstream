@@ -49,6 +49,7 @@ export default function CreatorDashboardPage() {
   const [username, setUsername] = useState<string | null>(null);
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [isCopied, setIsCopied] = useState(false);
+  const [isBioCopied, setIsBioCopied] = useState(false);
   const [isUpdatingGoal, setIsUpdatingGoal] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -62,19 +63,44 @@ export default function CreatorDashboardPage() {
   const [totalVolumeSol, setTotalVolumeSol] = useState(0);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Real tips from localStorage
+  // Real tips from localStorage + Solana Devnet API
   const [tips, setTips] = useState<TipRecord[]>([]);
 
-  // Refresh real tips from localStorage
-  const refreshDashboardTips = useCallback((uname: string) => {
+  // Refresh real tips from localStorage + merge on-chain Devnet tips
+  const refreshDashboardTips = useCallback(async (uname: string) => {
     if (!uname) return;
-    const realTips = getStoredTips(uname);
-    setTips(realTips);
+    const localTips = getStoredTips(uname);
+    let merged = localTips;
 
-    // Compute real totals
-    const totalLamports = realTips.reduce((acc, t) => acc + t.amountLamports, 0);
+    try {
+      const res = await fetch(`/api/creators/${encodeURIComponent(uname)}`, {
+        cache: "no-store",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const chainTips: TipRecord[] = (data?.tips || []).map((t: any) => ({
+          signature: t.signature,
+          donor: t.donor,
+          displayName: t.displayName || "Anonymous",
+          amountLamports: Number(t.amountLamports) || 0,
+          tier: typeof t.tier === "number" ? t.tier : 0,
+          message: t.message || "",
+          timestamp: Number(t.timestamp) || Date.now(),
+        }));
+        const map = new Map<string, TipRecord>();
+        for (const t of [...localTips, ...chainTips]) {
+          if (!map.has(t.signature)) map.set(t.signature, t);
+        }
+        merged = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+      }
+    } catch {
+      // Offline / transient fallback to localStorage
+    }
+
+    setTips(merged);
+    const totalLamports = merged.reduce((acc, t) => acc + t.amountLamports, 0);
     setTotalVolumeSol(totalLamports / 1_000_000_000);
-    setTotalTipsCount(realTips.length);
+    setTotalTipsCount(merged.length);
   }, []);
 
   // Dynamically find creator profile by wallet address & on-chain PDA
@@ -183,13 +209,15 @@ export default function CreatorDashboardPage() {
     loadWalletCreator();
   }, [publicKey, getCreatorPda, fetchCreatorAccount, refreshDashboardTips]);
 
-  // Real-time listener for incoming tips from other browser tabs
+  // Real-time listener + cross-device Devnet polling for incoming tips
   useEffect(() => {
     if (!username) return;
     const handleSync = () => refreshDashboardTips(username);
     window.addEventListener("storage", handleSync);
     window.addEventListener("solstream_new_tip", handleSync as any);
+    const poll = setInterval(handleSync, 4000);
     return () => {
+      clearInterval(poll);
       window.removeEventListener("storage", handleSync);
       window.removeEventListener("solstream_new_tip", handleSync as any);
     };
@@ -199,11 +227,24 @@ export default function CreatorDashboardPage() {
     ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
     : null;
 
+  const tipPageUrl = typeof window !== "undefined" && username
+    ? `${window.location.origin}/${username}`
+    : username
+    ? `https://solstream.app/${username}`
+    : "";
+
   const overlayUrl = typeof window !== "undefined" && username
     ? `${window.location.origin}/overlay/${username}`
     : username
     ? `https://solstream.app/overlay/${username}`
     : "";
+
+  const handleCopyTipLink = () => {
+    if (!tipPageUrl) return;
+    navigator.clipboard.writeText(tipPageUrl);
+    setIsBioCopied(true);
+    setTimeout(() => setIsBioCopied(false), 2500);
+  };
 
   const handleCopyOverlay = () => {
     if (!overlayUrl) return;
@@ -413,42 +454,87 @@ export default function CreatorDashboardPage() {
         {/* Dashboard Content when username exists */}
         {username && (
           <>
-            {/* ROW 1: OBS BROWSER SOURCE URL BANNER */}
-            <div className="w-full rounded-2xl bg-[#13141F] border border-[#9945FF]/40 p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 shadow-xl">
-              <div className="space-y-1">
-                <div className="text-xs font-black uppercase tracking-wider text-[#9945FF]">
-                  YOUR OBS BROWSER SOURCE URL
+            {/* ROW 1: PUBLIC BIO TIP LINK & OBS BROWSER SOURCE URL */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Public Stream Bio Tip Link */}
+              <div className="w-full rounded-2xl bg-[#13141F] border border-[#14F195]/40 p-5 flex flex-col justify-between gap-4 shadow-xl">
+                <div className="space-y-1">
+                  <div className="text-xs font-black uppercase tracking-wider text-[#14F195]">
+                    YOUR STREAM BIO TIP LINK
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    Paste in your Twitch, YouTube, or TikTok bio. Fans just connect any wallet and tip — zero signup required.
+                  </p>
                 </div>
-                <p className="text-xs text-zinc-400">
-                  Add it as a Browser Source (1920 × 1080) and tick &ldquo;Control audio via OBS&rdquo;.
-                </p>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-white truncate select-all">
+                    {tipPageUrl}
+                  </div>
+                  <button
+                    onClick={handleCopyTipLink}
+                    className="px-4 py-2.5 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    {isBioCopied ? (
+                      <>
+                        <Check className="w-4 h-4 text-[#090A0F]" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Link</span>
+                      </>
+                    )}
+                  </button>
+                  <Link
+                    href={`/${username}`}
+                    target="_blank"
+                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+                    title="Open fan tip page"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </Link>
+                </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <div className="px-4 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-[#14F195] truncate max-w-sm sm:max-w-md select-all">
-                  {overlayUrl}
+              {/* OBS Browser Source URL */}
+              <div className="w-full rounded-2xl bg-[#13141F] border border-[#9945FF]/40 p-5 flex flex-col justify-between gap-4 shadow-xl">
+                <div className="space-y-1">
+                  <div className="text-xs font-black uppercase tracking-wider text-[#9945FF]">
+                    YOUR OBS BROWSER SOURCE URL
+                  </div>
+                  <p className="text-xs text-zinc-400">
+                    Add it as a Browser Source (1920 × 1080) and tick &ldquo;Control audio via OBS&rdquo;.
+                  </p>
                 </div>
-                <button
-                  onClick={handleCopyOverlay}
-                  className="px-4 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex items-center gap-1.5 flex-shrink-0"
-                >
-                  {isCopied ? (
-                    <>
-                      <Check className="w-4 h-4 text-[#14F195]" />
-                      <span>Copied!</span>
-                    </>
-                  ) : (
-                    <span>Copy URL</span>
-                  )}
-                </button>
-                <Link
-                  href={`/overlay/${username}`}
-                  target="_blank"
-                  className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors"
-                  title="Preview overlay"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </Link>
+
+                <div className="flex items-center gap-2.5">
+                  <div className="flex-1 px-3.5 py-2.5 rounded-xl bg-black/60 border border-white/10 text-xs font-mono text-[#14F195] truncate select-all">
+                    {overlayUrl}
+                  </div>
+                  <button
+                    onClick={handleCopyOverlay}
+                    className="px-4 py-2.5 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white font-bold text-xs tracking-wide transition-all shadow-lg shadow-[#9945FF]/20 flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    {isCopied ? (
+                      <>
+                        <Check className="w-4 h-4 text-[#14F195]" />
+                        <span>Copied!</span>
+                      </>
+                    ) : (
+                      <span>Copy URL</span>
+                    )}
+                  </button>
+                  <Link
+                    href={`/overlay/${username}`}
+                    target="_blank"
+                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
+                    title="Preview overlay"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </Link>
+                </div>
               </div>
             </div>
 

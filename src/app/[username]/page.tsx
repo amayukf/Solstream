@@ -79,6 +79,7 @@ export default function FanTippingPage({ params }: { params: { username: string 
   });
 
   // Creator profile state
+  const [isCheckingCreator, setIsCheckingCreator] = useState(true);
   const [creatorProfile, setCreatorProfile] = useState<{
     authority: string | null;
     goalTitle: string;
@@ -93,11 +94,20 @@ export default function FanTippingPage({ params }: { params: { username: string 
     isInitialized: false,
   });
 
+  // Merge local tips with on-chain tips safely
+  const mergeTipLists = useCallback((localTips: TipRecord[], chainTips: TipRecord[]) => {
+    const map = new Map<string, TipRecord>();
+    for (const t of [...localTips, ...chainTips]) {
+      if (!map.has(t.signature)) map.set(t.signature, t);
+    }
+    return Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+  }, []);
+
   // Load real tips from localStorage
   const refreshTips = useCallback(() => {
     const realTips = getStoredTips(username);
-    setTips(realTips);
-  }, [username]);
+    setTips((prev) => mergeTipLists(realTips, prev));
+  }, [username, mergeTipLists]);
 
   useEffect(() => {
     refreshTips();
@@ -110,16 +120,65 @@ export default function FanTippingPage({ params }: { params: { username: string 
     };
   }, [refreshTips]);
 
-  // Load creator profile from localStorage & check on-chain PDA
+  // Load creator profile globally from Solana Devnet API (works for ANY fan without claiming!)
   useEffect(() => {
+    let cancelled = false;
+
     async function loadCreator() {
-      // 1. Check localStorage first
+      setIsCheckingCreator(true);
+
+      // 1. Primary: Query Solana Devnet directly via /api/creators/[username]
+      try {
+        const res = await fetch(`/api/creators/${encodeURIComponent(username)}`, {
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled && data?.found && data?.creator) {
+            const c = data.creator;
+            const chainTips: TipRecord[] = (data.tips || []).map((t: any) => ({
+              signature: t.signature,
+              donor: t.donor,
+              displayName: t.displayName || "Anonymous",
+              amountLamports: Number(t.amountLamports) || 0,
+              tier: typeof t.tier === "number" ? t.tier : 0,
+              message: t.message || "",
+              timestamp: Number(t.timestamp) || Date.now(),
+            }));
+
+            setCreatorProfile({
+              authority: c.authority,
+              goalTitle: c.goalTitle || "Stream Goal",
+              goalTargetSol: (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
+              goalCurrentSol: (c.goalCurrentLamports || 0) / 1_000_000_000,
+              isInitialized: true,
+            });
+
+            // Cache into localStorage for instant subsequent rendering
+            saveStoredCreator({
+              username: c.username,
+              authority: c.authority,
+              voiceId: c.voiceId,
+              goalTitle: c.goalTitle,
+              goalTargetLamports: c.goalTargetLamports,
+              goalCurrentLamports: c.goalCurrentLamports,
+              createdAt: Date.now(),
+            });
+
+            setTips((prev) => mergeTipLists(getStoredTips(username), mergeTipLists(prev, chainTips)));
+            setIsCheckingCreator(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.log("API creator lookup fallback:", err);
+      }
+
+      // 2. Fallback: Check localStorage or connected wallet PDA
       const stored = getStoredCreator(username);
       let authStr = stored?.authority || null;
 
-      // If user is viewing their own profile and connected
       if (!authStr && publicKey) {
-        // Check if current connected wallet has an initialized PDA with this username
         try {
           const pda = getCreatorPda(publicKey);
           const acc = await fetchCreatorAccount(pda);
@@ -136,7 +195,7 @@ export default function FanTippingPage({ params }: { params: { username: string 
           const authPubkey = new PublicKey(authStr);
           const pda = getCreatorPda(authPubkey);
           const acc = await fetchCreatorAccount(pda);
-          if (acc) {
+          if (!cancelled && acc) {
             const target = acc.goalTargetLamports ?? acc.goal_target_lamports;
             const current = acc.goalCurrentLamports ?? acc.goal_current_lamports;
             const targetSol = typeof target === "number" ? target / 1_000_000_000 : target?.toNumber ? target.toNumber() / 1_000_000_000 : (stored ? stored.goalTargetLamports / 1_000_000_000 : 1.0);
@@ -149,14 +208,14 @@ export default function FanTippingPage({ params }: { params: { username: string 
               goalCurrentSol: currentSol,
               isInitialized: true,
             });
+            setIsCheckingCreator(false);
             return;
           }
         } catch (e) {
           console.log("Account check finished:", e);
         }
 
-        // If stored has authority, it's claimed and initialized
-        if (stored) {
+        if (!cancelled && stored) {
           setCreatorProfile({
             authority: authStr,
             goalTitle: stored.goalTitle || "Stream Goal",
@@ -164,22 +223,28 @@ export default function FanTippingPage({ params }: { params: { username: string 
             goalCurrentSol: (stored.goalCurrentLamports || 0) / 1_000_000_000,
             isInitialized: true,
           });
+          setIsCheckingCreator(false);
           return;
         }
       }
 
-      // Not initialized on-chain yet
-      setCreatorProfile({
-        authority: authStr,
-        goalTitle: stored?.goalTitle || "Stream Goal",
-        goalTargetSol: stored ? stored.goalTargetLamports / 1_000_000_000 : 1.0,
-        goalCurrentSol: 0,
-        isInitialized: false,
-      });
+      if (!cancelled) {
+        setCreatorProfile({
+          authority: authStr,
+          goalTitle: stored?.goalTitle || "Stream Goal",
+          goalTargetSol: stored ? stored.goalTargetLamports / 1_000_000_000 : 1.0,
+          goalCurrentSol: 0,
+          isInitialized: false,
+        });
+        setIsCheckingCreator(false);
+      }
     }
 
     loadCreator();
-  }, [username, publicKey, getCreatorPda, fetchCreatorAccount]);
+    return () => {
+      cancelled = true;
+    };
+  }, [username, publicKey, getCreatorPda, fetchCreatorAccount, mergeTipLists]);
 
   // Load wallet balance
   useEffect(() => {
@@ -263,6 +328,13 @@ export default function FanTippingPage({ params }: { params: { username: string 
       addStoredTip(username, newTip);
       refreshTips();
 
+      // Notify server zero-trust verification route for cross-device Dashboard & OBS Overlay sync
+      fetch("/api/tips/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signature: tx, username }),
+      }).catch(() => {});
+
       // Update goal state
       setCreatorProfile((prev) => ({
         ...prev,
@@ -322,21 +394,37 @@ export default function FanTippingPage({ params }: { params: { username: string 
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-6 pt-4">
-        {/* Uninitialized Warning Banner if profile not on-chain */}
-        {!creatorProfile.isInitialized && (
+        {/* Loading state while verifying creator on-chain */}
+        {isCheckingCreator && (
+          <div className="mb-6 p-4 rounded-2xl bg-[#13141F] border border-white/10 text-zinc-400 text-xs flex items-center gap-2.5">
+            <Loader2 className="w-4 h-4 animate-spin text-[#14F195]" />
+            <span>Looking up <strong className="text-white">@{username}</strong> on Solana Devnet...</span>
+          </div>
+        )}
+
+        {/* Creator not found banner (never forces fans to claim an account) */}
+        {!isCheckingCreator && !creatorProfile.isInitialized && (
           <div className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
             <div className="flex items-center gap-2.5">
               <AlertCircle className="w-5 h-5 text-amber-400 flex-shrink-0" />
               <span>
-                <strong>Profile Not Initialized on Devnet:</strong> @{username} must be created on-chain before it can receive tips.
+                <strong>Creator @{username} not found on Solana Devnet:</strong> This handle hasn&apos;t been registered on-chain yet. If you&apos;re a fan, browse active creators on the homepage.
               </span>
             </div>
-            <Link
-              href={`/claim?handle=${username}`}
-              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs tracking-wide transition-colors flex-shrink-0"
-            >
-              Initialize @{username} on Solana
-            </Link>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <Link
+                href="/#creators"
+                className="px-4 py-2 rounded-xl bg-white/10 hover:bg-white/20 text-white font-bold text-xs tracking-wide transition-colors"
+              >
+                Explore Creators
+              </Link>
+              <Link
+                href={`/claim?handle=${username}`}
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-bold text-xs tracking-wide transition-colors"
+              >
+                Are you @{username}? Claim
+              </Link>
+            </div>
           </div>
         )}
 
@@ -496,8 +584,13 @@ export default function FanTippingPage({ params }: { params: { username: string 
               {/* Action Button */}
               <div>
                 {!connected ? (
-                  <div className="w-full flex justify-center">
-                    <WalletMultiButton className="!w-full !justify-center !h-12 !rounded-2xl !bg-gradient-to-r !from-[#9945FF] !to-[#14F195] !text-[#090A0F] !font-black !text-sm" />
+                  <div className="space-y-2.5">
+                    <div className="w-full flex justify-center">
+                      <WalletMultiButton className="!w-full !justify-center !h-12 !rounded-2xl !bg-gradient-to-r !from-[#9945FF] !to-[#14F195] !text-[#090A0F] !font-black !text-sm" />
+                    </div>
+                    <p className="text-center text-[11px] text-[#14F195] font-medium">
+                      No SolStream account needed — connect your Solana wallet to tip @{username}
+                    </p>
                   </div>
                 ) : (
                   <button
