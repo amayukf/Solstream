@@ -42,8 +42,16 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`dark ${plusJakarta.variable} ${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `try{if(window.location.pathname.startsWith('/overlay/')){document.documentElement.classList.add('obs-transparent');}}catch(e){}`,
+          }}
+        />
+      </head>
       <body className="bg-[#0B0C10] text-white min-h-screen font-sans antialiased selection:bg-solana-purple selection:text-white">
         <SolanaWalletProvider>{children}</SolanaWalletProvider>
       </body>
