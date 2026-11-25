@@ -38,6 +38,19 @@ body {
   animation: bounce-short 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+@keyframes shrink-7s {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
+.animate-shrink-7s {
+  animation: shrink-7s 7s linear forwards;
+}
+
 /* Glassmorphism utilities */
 .glass {
   background: rgba(24, 25, 36, 0.7);

@@ -22,26 +22,28 @@ async function generateElevenLabsDataUrl(
 
   try {
     const safeVoice = voiceId && voiceId.length >= 10 ? voiceId : DEFAULT_VOICE_ID;
-    const res = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(safeVoice)}`,
-      {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          "Content-Type": "application/json",
-          Accept: "audio/mpeg",
+    const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
+      safeVoice
+    )}?optimize_streaming_latency=4&output_format=mp3_44100_128`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "audio/mpeg",
+      },
+      body: JSON.stringify({
+        text,
+        model_id: "eleven_flash_v2_5",
+        voice_settings: {
+          stability: 0.45,
+          similarity_boost: 0.78,
+          speed: 1.1,
         },
-        body: JSON.stringify({
-          text,
-          model_id: "eleven_multilingual_v2",
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.75,
-          },
-        }),
-        signal: AbortSignal.timeout(9000),
-      }
-    );
+      }),
+      signal: AbortSignal.timeout(7000),
+    });
 
     if (!res.ok) {
       console.warn("ElevenLabs TTS non-OK:", res.status);

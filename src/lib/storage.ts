@@ -106,6 +106,13 @@ export function addStoredTip(username: string, tip: TipRecord): void {
           detail: { username: cleanUsername, tip },
         })
       );
+      if (typeof BroadcastChannel !== "undefined") {
+        try {
+          const ch = new BroadcastChannel(`solstream_alerts_${cleanUsername}`);
+          ch.postMessage(tip);
+          ch.close();
+        } catch {}
+      }
     }
   } catch (e) {
     console.error("Failed to add tip to localStorage:", e);

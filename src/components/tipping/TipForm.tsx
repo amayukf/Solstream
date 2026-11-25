@@ -126,7 +126,7 @@ export const TipForm: React.FC<TipFormProps> = ({
             type="text"
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="e.g. Abebe"
+            placeholder="Your display name or handle"
             maxLength={32}
             className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
           />

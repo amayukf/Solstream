@@ -35,6 +35,12 @@ export default function HomePage() {
     }[]
   >([]);
   const [previewTier, setPreviewTier] = useState(PREVIEW_TIERS[2]);
+  const [latestRealTip, setLatestRealTip] = useState<{
+    displayName: string;
+    amountSol: number;
+    message: string;
+    signature: string;
+  } | null>(null);
   const [solTicker, setSolTicker] = useState<{
     price: number;
     chg: number;
@@ -47,8 +53,22 @@ export default function HomePage() {
     fetch("/api/creators")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
-        if (Array.isArray(data?.creators)) {
+        if (Array.isArray(data?.creators) && data.creators.length > 0) {
           setOnChainCreators(data.creators);
+          const primaryHandle = stored || data.creators[0].username;
+          return fetch(`/api/creators/${encodeURIComponent(primaryHandle)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((creatorData) => {
+              const firstTip = creatorData?.tips?.[0];
+              if (firstTip) {
+                setLatestRealTip({
+                  displayName: firstTip.displayName || "Anonymous",
+                  amountSol: (Number(firstTip.amountLamports) || 0) / 1_000_000_000,
+                  message: firstTip.message || "",
+                  signature: firstTip.signature || "",
+                });
+              }
+            });
         }
       })
       .catch(() => {});
@@ -196,17 +216,17 @@ export default function HomePage() {
 
           {/* Right Column: Interactive Diagram */}
           <div className="lg:col-span-5 flex flex-col items-center">
-            {/* Top Card: Fan Page Preview */}
+            {/* Top Card: Live Fan Page Link */}
             <div className="w-full max-w-md rounded-2xl bg-[#13141F] border border-white/10 p-5 shadow-2xl">
               <div className="flex items-center justify-between text-xs mb-4">
                 <span className="text-zinc-300 font-semibold">
                   Fan page ·{" "}
                   <span className="text-white font-mono">
-                    @{activeHandle || "yourhandle"}
+                    @{activeHandle || onChainCreators[0]?.username || "claim"}
                   </span>
                 </span>
                 <span className="text-zinc-500 font-mono text-[11px]">
-                  Live flow preview
+                  Direct Devnet transfer
                 </span>
               </div>
 
@@ -231,7 +251,11 @@ export default function HomePage() {
               </div>
 
               <Link
-                href={activeHandle ? `/${activeHandle}` : "/claim"}
+                href={
+                  activeHandle || onChainCreators[0]?.username
+                    ? `/${activeHandle || onChainCreators[0]?.username}`
+                    : "/claim"
+                }
                 className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg shadow-[#14F195]/20"
               >
                 <span>Send {previewTier.sol} SOL</span>
@@ -248,22 +272,28 @@ export default function HomePage() {
               <ArrowDown className="w-5 h-5 text-zinc-500 animate-bounce" />
             </div>
 
-            {/* Bottom Card: Alert Popup Preview */}
+            {/* Bottom Card: Real Latest On-Chain OBS Alert */}
             <div className="w-full max-w-md rounded-2xl bg-[#13141F] border-2 border-[#9945FF]/70 p-5 shadow-2xl shadow-[#9945FF]/10 relative">
               <div className="flex items-start gap-3 mb-3">
                 <span className="text-2xl">{previewTier.emoji}</span>
-                <div>
-                  <div className="font-display text-sm font-bold text-white">
-                    Viewer tipped {previewTier.sol} SOL
+                <div className="min-w-0 flex-1">
+                  <div className="font-display text-sm font-bold text-white truncate">
+                    {latestRealTip
+                      ? `${latestRealTip.displayName} tipped ${latestRealTip.amountSol.toFixed(3)} SOL`
+                      : `Instant ${previewTier.sol} SOL OBS Alert`}
                   </div>
                   <div className="text-[11px] text-[#14F195] font-semibold">
-                    Verified on Solana Devnet
+                    {latestRealTip
+                      ? "Latest confirmed tx on Solana Devnet"
+                      : "Verified on Solana Devnet"}
                   </div>
                 </div>
               </div>
 
-              <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs text-zinc-200 italic mb-3">
-                &ldquo;መልካም ስራ! Keep streaming live!&rdquo;
+              <div className="p-3 rounded-xl bg-black/40 border border-white/5 text-xs text-zinc-200 italic mb-3 truncate">
+                {latestRealTip
+                  ? `"${latestRealTip.message}"`
+                  : "Donor message appears live and plays via ElevenLabs TTS"}
               </div>
 
               <div className="flex items-center gap-2 text-xs text-zinc-400">

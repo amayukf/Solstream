@@ -6,18 +6,26 @@ import { getStoredTips, getStoredCreator } from "@/lib/storage";
 interface AlertItem {
   id: string;
   signature: string;
+  donor: string;
   displayName: string;
   amountSol: number;
   tier: number;
   tierName: string;
   message: string;
+  timestamp: number;
   audioDataUrl?: string | null;
 }
 
-const TIER_NAMES = ["Coffee", "Rose", "Fire", "Diamond", "Rocket", "Crown"];
-const TIER_EMOJIS = ["☕", "🌹", "🔥", "💎", "🚀", "👑"];
+const TIER_STYLES = [
+  { name: "Coffee", emoji: "☕", border: "#E2B77A", glow: "rgba(226, 183, 122, 0.35)" },
+  { name: "Rose", emoji: "🌹", border: "#FF5E7E", glow: "rgba(255, 94, 126, 0.35)" },
+  { name: "Fire", emoji: "🔥", border: "#FF8C00", glow: "rgba(255, 140, 0, 0.35)" },
+  { name: "Diamond", emoji: "💎", border: "#00F0FF", glow: "rgba(0, 240, 255, 0.35)" },
+  { name: "Rocket", emoji: "🚀", border: "#9945FF", glow: "rgba(153, 69, 255, 0.45)" },
+  { name: "Crown", emoji: "👑", border: "#FFD700", glow: "rgba(255, 215, 0, 0.45)" },
+];
 
-function playAlertChime() {
+function playFastChime() {
   try {
     const AudioCtx =
       window.AudioContext || (window as any).webkitAudioContext;
@@ -25,36 +33,40 @@ function playAlertChime() {
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
 
-    const notes = [659.25, 987.77];
+    const notes = [783.99, 1046.5]; // Crisp fast G5 -> C6 chime (180ms total)
     notes.forEach((freq, i) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.setValueAtTime(freq, now + i * 0.12);
-      gain.gain.setValueAtTime(0.001, now + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.03);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.45);
+      osc.frequency.setValueAtTime(freq, now + i * 0.08);
+      gain.gain.setValueAtTime(0.001, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.1, now + i * 0.08 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.08 + 0.25);
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.start(now + i * 0.12);
-      osc.stop(now + i * 0.12 + 0.48);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.28);
     });
   } catch {
-    // Ignore autoplay restrictions gracefully
+    // Ignore browser autoplay restrictions gracefully
   }
 }
 
-function speakFallback(displayName: string, amountSol: number, message: string) {
+function speakFastFallback(
+  displayName: string,
+  amountSol: number,
+  message: string
+) {
   if (typeof window !== "undefined" && window.speechSynthesis) {
     try {
       window.speechSynthesis.cancel();
       const text = `${displayName} tipped ${amountSol} SOL. ${message}`;
       const utter = new SpeechSynthesisUtterance(text);
-      utter.rate = 1.0;
+      utter.rate = 1.18; // Snappy fast stream delivery
       utter.pitch = 1.0;
       window.speechSynthesis.speak(utter);
     } catch {
-      // Ignore speech errors
+      // Graceful fallback
     }
   }
 }
@@ -69,11 +81,15 @@ export default function ObsOverlayPage({
   const [queue, setQueue] = useState<AlertItem[]>([]);
   const [currentAlert, setCurrentAlert] = useState<AlertItem | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [sseConnected, setSseConnected] = useState(false);
+  const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
+  const [latestTip, setLatestTip] = useState<AlertItem | null>(null);
+  const [stats, setStats] = useState({ totalTips: 0, totalVolumeSol: 0 });
 
   const seenSigs = useRef<Set<string>>(new Set());
+  const audioBySig = useRef<Map<string, string>>(new Map());
+  const playedAudioSigs = useRef<Set<string>>(new Set());
   const isFirstLocalLoad = useRef(true);
-  const isFirstRemoteLoad = useRef(true);
-  const isFetchingRemote = useRef(false);
 
   const [goal, setGoal] = useState({
     title: "Stream Goal",
@@ -88,175 +104,253 @@ export default function ObsOverlayPage({
     }
   }, []);
 
-  const refreshGoal = useCallback(() => {
-    const creator = getStoredCreator(username);
-    const tips = getStoredTips(username);
-    const tipsTotalSol =
-      tips.reduce((acc, t) => acc + t.amountLamports, 0) / 1_000_000_000;
-
-    if (creator) {
-      const storedCurrent = (creator.goalCurrentLamports || 0) / 1_000_000_000;
-      setGoal({
-        title: creator.goalTitle || "Stream Goal",
-        currentSol: Math.max(storedCurrent, tipsTotalSol),
-        targetSol: (creator.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
-      });
-    }
-  }, [username]);
-
+  // Fetch live SOL/USD price for real-time USD conversion on alert cards
   useEffect(() => {
-    refreshGoal();
-  }, [refreshGoal]);
+    const fetchPrice = () => {
+      fetch("/api/prices")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          const sol = data?.coins?.find((c: any) => c.symbol === "SOL");
+          if (sol?.priceUsd) setSolUsdPrice(sol.priceUsd);
+        })
+        .catch(() => {});
+    };
+    fetchPrice();
+    const timer = setInterval(fetchPrice, 60_000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const checkLocalTips = useCallback(() => {
-    const storedTips = getStoredTips(username);
+  const toAlertItem = useCallback((t: any): AlertItem => {
+    const tierIdx = typeof t.tier === "number" ? t.tier : 0;
+    const style = TIER_STYLES[tierIdx] || TIER_STYLES[0];
+    return {
+      id: t.signature,
+      signature: t.signature,
+      donor: t.donor || "",
+      displayName: t.displayName || "Anonymous",
+      amountSol: (Number(t.amountLamports) || 0) / 1_000_000_000,
+      tier: tierIdx,
+      tierName: style.name,
+      message: t.message || "",
+      timestamp: Number(t.timestamp) || Date.now(),
+      audioDataUrl: t.audioDataUrl || null,
+    };
+  }, []);
 
-    if (isFirstLocalLoad.current) {
-      storedTips.forEach((t) => seenSigs.current.add(t.signature));
-      isFirstLocalLoad.current = false;
-      return;
-    }
-
-    const newTips = storedTips.filter((t) => !seenSigs.current.has(t.signature));
-    if (newTips.length > 0) {
-      newTips.forEach((t) => seenSigs.current.add(t.signature));
-
-      const newAlerts: AlertItem[] = newTips.map((t) => ({
-        id: t.signature,
-        signature: t.signature,
-        displayName: t.displayName,
-        amountSol: t.amountLamports / 1_000_000_000,
-        tier: typeof t.tier === "number" ? t.tier : 3,
-        tierName: TIER_NAMES[t.tier] || "Tip",
-        message: t.message,
-      }));
-
-      setQueue((prev) => [...prev, ...newAlerts]);
-      refreshGoal();
-    }
-  }, [username, refreshGoal]);
-
-  const checkRemoteTips = useCallback(async () => {
-    if (isFetchingRemote.current) return;
-    isFetchingRemote.current = true;
-    try {
-      const res = await fetch(`/api/creators/${encodeURIComponent(username)}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-
-      if (data?.creator) {
-        const c = data.creator;
-        setGoal({
-          title: c.goalTitle || "Stream Goal",
-          currentSol: (c.goalCurrentLamports || 0) / 1_000_000_000,
-          targetSol: (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
-        });
+  const enqueueIncomingTip = useCallback(
+    (rawTip: any) => {
+      const item = toAlertItem(rawTip);
+      if (item.audioDataUrl) {
+        audioBySig.current.set(item.signature, item.audioDataUrl);
       }
 
-      const remoteTips: any[] = data?.tips || [];
-      if (isFirstRemoteLoad.current) {
-        remoteTips.forEach((t) => seenSigs.current.add(t.signature));
-        isFirstRemoteLoad.current = false;
+      setLatestTip(item);
+
+      if (seenSigs.current.has(item.signature)) {
+        // If alert is currently visible and ElevenLabs audio just arrived over SSE, update it!
+        setCurrentAlert((curr) =>
+          curr && curr.signature === item.signature && item.audioDataUrl
+            ? { ...curr, audioDataUrl: item.audioDataUrl }
+            : curr
+        );
         return;
       }
 
-      const newTips = remoteTips.filter((t) => !seenSigs.current.has(t.signature));
-      if (newTips.length > 0) {
-        newTips.forEach((t) => seenSigs.current.add(t.signature));
-        const newAlerts: AlertItem[] = newTips.map((t) => ({
-          id: t.signature,
-          signature: t.signature,
-          displayName: t.displayName || "Anonymous",
-          amountSol: (Number(t.amountLamports) || 0) / 1_000_000_000,
-          tier: typeof t.tier === "number" ? t.tier : 3,
-          tierName: TIER_NAMES[t.tier] || "Tip",
-          message: t.message || "",
-          audioDataUrl: t.audioDataUrl || null,
-        }));
-        setQueue((prev) => [...prev, ...newAlerts]);
-      }
-    } catch {
-      // Transient RPC error ignored gracefully
-    } finally {
-      isFetchingRemote.current = false;
-    }
-  }, [username]);
+      seenSigs.current.add(item.signature);
+      setQueue((prev) => [...prev, item]);
+      setGoal((prev) => ({
+        ...prev,
+        currentSol: prev.currentSol + item.amountSol,
+      }));
+      setStats((prev) => ({
+        totalTips: prev.totalTips + 1,
+        totalVolumeSol: prev.totalVolumeSol + item.amountSol,
+      }));
+    },
+    [toAlertItem]
+  );
 
+  // Initial localStorage goal & seen tracking
   useEffect(() => {
-    checkLocalTips();
-    checkRemoteTips();
+    const creator = getStoredCreator(username);
+    const localTips = getStoredTips(username);
+    if (isFirstLocalLoad.current) {
+      localTips.forEach((t) => seenSigs.current.add(t.signature));
+      if (localTips.length > 0) {
+        setLatestTip(toAlertItem(localTips[0]));
+      }
+      isFirstLocalLoad.current = false;
+    }
+    if (creator) {
+      setGoal({
+        title: creator.goalTitle || "Stream Goal",
+        currentSol: (creator.goalCurrentLamports || 0) / 1_000_000_000,
+        targetSol:
+          (creator.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
+      });
+    }
+  }, [username, toAlertItem]);
 
-    const localTimer = setInterval(checkLocalTips, 1000);
-    const remoteTimer = setInterval(checkRemoteTips, 2500);
+  // 1. Primary Real-Time Transport: Server-Sent Events (SSE) for instant <50ms cross-device alerts + ElevenLabs audio
+  useEffect(() => {
+    const es = new EventSource(
+      `/api/overlay/${encodeURIComponent(username)}/stream`
+    );
 
+    es.onopen = () => setSseConnected(true);
+    es.onerror = () => setSseConnected(false);
+
+    es.addEventListener("init", (evt: MessageEvent) => {
+      try {
+        const data = JSON.parse(evt.data);
+        if (data?.creator) {
+          const c = data.creator;
+          setGoal({
+            title: c.goalTitle || "Stream Goal",
+            currentSol: (c.goalCurrentLamports || 0) / 1_000_000_000,
+            targetSol: (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
+          });
+          setStats({
+            totalTips: Number(c.totalTips) || 0,
+            totalVolumeSol: (Number(c.totalVolume) || 0) / 1_000_000_000,
+          });
+        }
+        const initTips: any[] = data?.tips || [];
+        initTips.forEach((t) => seenSigs.current.add(t.signature));
+        if (initTips.length > 0) {
+          setLatestTip(toAlertItem(initTips[0]));
+          setStats((prev) => ({
+            totalTips: Math.max(prev.totalTips, initTips.length),
+            totalVolumeSol: Math.max(
+              prev.totalVolumeSol,
+              initTips.reduce(
+                (acc, t) => acc + (Number(t.amountLamports) || 0),
+                0
+              ) / 1_000_000_000
+            ),
+          }));
+        }
+      } catch {}
+    });
+
+    es.addEventListener("tip", (evt: MessageEvent) => {
+      try {
+        const tip = JSON.parse(evt.data);
+        enqueueIncomingTip(tip);
+      } catch {}
+    });
+
+    return () => {
+      es.close();
+      setSseConnected(false);
+    };
+  }, [username, enqueueIncomingTip, toAlertItem]);
+
+  // 2. Local Instant Transport: BroadcastChannel + storage events for 0ms same-browser responsiveness
+  useEffect(() => {
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === `solstream_tips_${username}`) checkLocalTips();
-      if (e.key === "solstream_creators") refreshGoal();
+      if (e.key === `solstream_tips_${username}`) {
+        const tips = getStoredTips(username);
+        for (const t of tips) {
+          if (!seenSigs.current.has(t.signature)) {
+            enqueueIncomingTip(t);
+          }
+        }
+      }
     };
     const handleCustom = (e: any) => {
-      if (e.detail?.username === username) checkLocalTips();
+      if (e.detail?.username === username && e.detail?.tip) {
+        enqueueIncomingTip(e.detail.tip);
+      }
     };
+
+    let bc: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== "undefined") {
+      bc = new BroadcastChannel(`solstream_alerts_${username}`);
+      bc.onmessage = (e) => {
+        if (e.data?.signature) enqueueIncomingTip(e.data);
+      };
+    }
 
     window.addEventListener("storage", handleStorage);
     window.addEventListener("solstream_new_tip", handleCustom);
 
     return () => {
-      clearInterval(localTimer);
-      clearInterval(remoteTimer);
+      bc?.close();
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener("solstream_new_tip", handleCustom);
     };
-  }, [checkLocalTips, checkRemoteTips, refreshGoal, username]);
+  }, [username, enqueueIncomingTip]);
 
-  // FIFO Alert Queue Processor (ElevenLabs MP3 or Web Speech fallback)
+  // 3. FIFO Alert Queue Processor & Ultra-Fast Audio Trigger
   useEffect(() => {
     if (!currentAlert && queue.length > 0) {
       const nextAlert = queue[0];
       setQueue((prev) => prev.slice(1));
       setCurrentAlert(nextAlert);
+      playFastChime();
 
-      playAlertChime();
+      // Wait briefly (220ms) if audioDataUrl hasn't arrived yet via SSE so ElevenLabs speaks first
+      const audioTimer = setTimeout(() => {
+        if (playedAudioSigs.current.has(nextAlert.signature)) return;
+        playedAudioSigs.current.add(nextAlert.signature);
 
-      setTimeout(() => {
-        if (nextAlert.audioDataUrl) {
-          const audio = new Audio(nextAlert.audioDataUrl);
+        const cachedAudio =
+          nextAlert.audioDataUrl ||
+          audioBySig.current.get(nextAlert.signature) ||
+          null;
+
+        if (cachedAudio) {
+          const audio = new Audio(cachedAudio);
+          audio.playbackRate = 1.05;
           audio.play().catch(() => {
-            speakFallback(
+            speakFastFallback(
               nextAlert.displayName,
               nextAlert.amountSol,
               nextAlert.message
             );
           });
         } else {
-          speakFallback(
+          speakFastFallback(
             nextAlert.displayName,
             nextAlert.amountSol,
             nextAlert.message
           );
         }
-      }, 350);
+      }, 220);
 
       const dismissTimer = setTimeout(() => {
         setCurrentAlert(null);
       }, 7000);
 
-      return () => clearTimeout(dismissTimer);
+      return () => {
+        clearTimeout(audioTimer);
+        clearTimeout(dismissTimer);
+      };
     }
   }, [currentAlert, queue]);
 
-  const triggerPreviewAlert = () => {
-    const sample: AlertItem = {
-      id: `preview-${Date.now()}`,
-      signature: "preview",
-      displayName: "Test Viewer",
-      amountSol: 0.05,
-      tier: 3,
-      tierName: "Diamond",
-      message: "Audio & OBS overlay test looks crisp!",
-    };
-    setQueue((prev) => [...prev, sample]);
+  // If ElevenLabs audio arrives while alert is active and speech hasn't played it yet
+  useEffect(() => {
+    if (
+      currentAlert?.audioDataUrl &&
+      !playedAudioSigs.current.has(currentAlert.signature)
+    ) {
+      playedAudioSigs.current.add(currentAlert.signature);
+      const audio = new Audio(currentAlert.audioDataUrl);
+      audio.playbackRate = 1.05;
+      audio.play().catch(() => {});
+    }
+  }, [currentAlert]);
+
+  const replayLatestRealTip = () => {
+    if (!latestTip) return;
+    const replayId = `${latestTip.signature}-replay-${Date.now()}`;
+    playedAudioSigs.current.delete(replayId);
+    setQueue((prev) => [
+      ...prev,
+      { ...latestTip, id: replayId, signature: replayId },
+    ]);
   };
 
   const percentage = Math.min(
@@ -264,100 +358,193 @@ export default function ObsOverlayPage({
     100
   );
 
+  const activeStyle = currentAlert
+    ? TIER_STYLES[currentAlert.tier] || TIER_STYLES[0]
+    : TIER_STYLES[3];
+
   return (
     <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-8 group">
-      {/* Top Helper Pills: invisible in live OBS unless ?preview=1 or mouse hovered */}
+      {/* Top Status Bar: Hidden during live OBS capture, shown on hover or ?preview=1 */}
       <div
         className={`flex items-center justify-between text-xs transition-opacity duration-300 ${
-          isPreviewMode
-            ? "opacity-90 hover:opacity-100"
-            : "opacity-0 group-hover:opacity-100"
+          isPreviewMode ? "opacity-95" : "opacity-0 group-hover:opacity-100"
         }`}
       >
-        <div className="px-3.5 py-1.5 rounded-full bg-black/70 border border-white/10 text-zinc-400 font-medium">
-          OBS Browser Source:{" "}
-          <span className="font-mono text-white">@{username}</span> (Clean Canvas)
+        <div className="px-3.5 py-1.5 rounded-full bg-black/80 border border-white/10 text-zinc-300 font-medium flex items-center gap-2 backdrop-blur-md">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              sseConnected ? "bg-[#14F195] animate-pulse" : "bg-amber-400"
+            }`}
+          />
+          <span>
+            OBS Overlay · <span className="font-mono text-white">@{username}</span> ·{" "}
+            {sseConnected ? "Realtime SSE Connected" : "Connecting..."}
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
+        {latestTip && (
           <button
             type="button"
-            onClick={triggerPreviewAlert}
-            className="px-3.5 py-1.5 rounded-full bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-bold text-[11px] shadow-lg transition-colors cursor-pointer"
+            onClick={replayLatestRealTip}
+            className="px-4 py-1.5 rounded-full bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-bold text-[11px] shadow-lg transition-colors cursor-pointer"
           >
-            Test Alert &amp; Sound
+            Replay Latest Real Tip
           </button>
-          <div className="px-3.5 py-1.5 rounded-full bg-[#9945FF] text-white font-medium text-[11px] shadow-lg shadow-[#9945FF]/20">
-            7s auto-dismiss · FIFO queue
-          </div>
-        </div>
+        )}
       </div>
 
       {/* CENTER REAL-TIME ALERT POPUP */}
       <div className="flex-1 flex items-center justify-center">
         {currentAlert && (
-          <div className="relative animate-bounce-short w-full max-w-xl">
-            <div className="absolute inset-0 bg-gradient-to-r from-[#9945FF]/40 to-[#14F195]/40 blur-2xl rounded-3xl" />
+          <div className="relative animate-bounce-short w-full max-w-2xl">
+            {/* Dynamic tier ambient glow */}
+            <div
+              className="absolute inset-0 blur-3xl rounded-3xl opacity-70"
+              style={{
+                background: `radial-gradient(circle, ${activeStyle.glow}, transparent 75%)`,
+              }}
+            />
 
-            <div className="relative rounded-3xl bg-[#13141F]/95 border-2 border-[#14F195]/70 p-6 md:p-8 w-full shadow-2xl backdrop-blur-xl">
-              <div className="flex items-center gap-4 mb-3">
-                <div className="w-12 h-12 rounded-2xl bg-[#00F0FF]/15 border border-[#00F0FF]/30 flex items-center justify-center text-2xl shadow-lg shadow-[#00F0FF]/20">
-                  {TIER_EMOJIS[currentAlert.tier] || "💎"}
+            <div
+              className="relative rounded-3xl bg-[#0F101A]/95 border-2 overflow-hidden shadow-2xl backdrop-blur-xl"
+              style={{ borderColor: activeStyle.border }}
+            >
+              <div className="p-6 md:p-7 space-y-4">
+                {/* Top Header: Tipper Name, Wallet, Tier & Amount */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-4 min-w-0">
+                    <div
+                      className="w-14 h-14 rounded-2xl flex items-center justify-center text-3xl flex-shrink-0 border"
+                      style={{
+                        backgroundColor: `${activeStyle.border}18`,
+                        borderColor: `${activeStyle.border}50`,
+                      }}
+                    >
+                      {activeStyle.emoji}
+                    </div>
+
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-1">
+                        <span
+                          className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider text-[#090A0F]"
+                          style={{ backgroundColor: activeStyle.border }}
+                        >
+                          {activeStyle.name} Tier
+                        </span>
+                        {currentAlert.donor && (
+                          <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono text-[10px] text-zinc-300">
+                            {currentAlert.donor.slice(0, 4)}...
+                            {currentAlert.donor.slice(-4)}
+                          </span>
+                        )}
+                      </div>
+
+                      <h2 className="font-display text-2xl font-bold text-white tracking-tight truncate">
+                        {currentAlert.displayName}
+                      </h2>
+                    </div>
+                  </div>
+
+                  {/* Amount & Live USD */}
+                  <div className="text-right flex-shrink-0">
+                    <div className="font-mono tabular-nums text-2xl sm:text-3xl font-black text-[#14F195]">
+                      +{currentAlert.amountSol.toFixed(3)} SOL
+                    </div>
+                    {solUsdPrice && (
+                      <div className="font-mono tabular-nums text-xs text-zinc-400">
+                        ≈ ${(currentAlert.amountSol * solUsdPrice).toFixed(2)} USD
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div>
-                  <h2 className="font-display text-2xl font-bold text-white tracking-tight">
-                    {currentAlert.displayName} tipped{" "}
-                    <span className="font-mono text-[#14F195]">
-                      {currentAlert.amountSol} SOL
+                {/* Message Box + Animated Voice Waveform */}
+                <div className="flex items-center gap-4 bg-black/50 border border-white/10 rounded-2xl p-4">
+                  <p className="flex-1 text-base text-white font-medium leading-snug">
+                    &ldquo;{currentAlert.message}&rdquo;
+                  </p>
+
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <div className="flex items-end gap-1 h-6">
+                      <span className="w-1.5 h-3 bg-[#E031E0] rounded-full animate-pulse" />
+                      <span className="w-1.5 h-5 bg-[#00F0FF] rounded-full animate-pulse delay-75" />
+                      <span className="w-1.5 h-6 bg-[#14F195] rounded-full animate-pulse delay-150" />
+                      <span className="w-1.5 h-4 bg-[#9945FF] rounded-full animate-pulse delay-100" />
+                      <span className="w-1.5 h-2 bg-[#00F0FF] rounded-full animate-pulse delay-200" />
+                    </div>
+                    <span className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">
+                      {currentAlert.audioDataUrl ? "ElevenLabs AI" : "AI Voice"}
                     </span>
-                  </h2>
-                  <div className="text-xs font-bold text-[#14F195] tracking-wide">
-                    {currentAlert.tierName} · Verified on Solana
                   </div>
+                </div>
+
+                {/* Footer Verification Proof */}
+                <div className="flex items-center justify-between text-[11px] text-zinc-400 font-mono">
+                  <span className="inline-flex items-center gap-1.5 text-[#14F195]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#14F195]" />
+                    Verified on Solana Devnet
+                  </span>
+                  {!currentAlert.signature.includes("-replay-") && (
+                    <span>
+                      tx: {currentAlert.signature.slice(0, 6)}...
+                      {currentAlert.signature.slice(-6)}
+                    </span>
+                  )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 bg-[#090A0F]/80 border border-white/10 rounded-2xl p-4">
-                <p className="flex-1 text-sm text-zinc-100 font-medium">
-                  {currentAlert.message}
-                </p>
-
-                <div className="flex items-end gap-1 h-6 flex-shrink-0">
-                  <span className="w-1.5 h-3 bg-[#E031E0] rounded-full animate-pulse" />
-                  <span className="w-1.5 h-5 bg-[#00F0FF] rounded-full animate-pulse delay-75" />
-                  <span className="w-1.5 h-6 bg-[#14F195] rounded-full animate-pulse delay-150" />
-                  <span className="w-1.5 h-4 bg-[#9945FF] rounded-full animate-pulse delay-100" />
-                  <span className="w-1.5 h-2 bg-[#00F0FF] rounded-full animate-pulse delay-200" />
-                </div>
+              {/* 7-second Smooth Countdown Progress Bar */}
+              <div className="w-full h-1 bg-black/60">
+                <div
+                  className="h-full animate-shrink-7s"
+                  style={{ backgroundColor: activeStyle.border }}
+                />
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* BOTTOM ROW: STREAM GOAL BAR */}
-      <div className="flex items-end justify-between w-full">
-        <div className="w-full max-w-md rounded-2xl bg-[#13141F]/90 border border-white/10 p-3.5 backdrop-blur-md shadow-2xl">
+      {/* BOTTOM LIVE HUD: STREAM GOAL BAR + REAL-TIME LATEST TIPPER */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 w-full">
+        {/* Live Goal Bar */}
+        <div className="w-full max-w-md rounded-2xl bg-[#0F101A]/90 border border-white/10 p-4 backdrop-blur-md shadow-2xl">
           <div className="flex items-center justify-between text-xs font-bold mb-2">
             <span className="font-display text-white">{goal.title}</span>
             <span className="text-[#14F195] font-mono tabular-nums">
-              {goal.currentSol.toFixed(3)} / {goal.targetSol.toFixed(1)} SOL
+              {goal.currentSol.toFixed(3)} / {goal.targetSol.toFixed(1)} SOL (
+              {percentage}%)
             </span>
           </div>
 
           <div className="relative w-full h-2.5 bg-black/60 rounded-full overflow-hidden p-0.5 border border-white/5">
             <div
               className="h-full rounded-full bg-gradient-to-r from-[#9945FF] to-[#14F195] transition-all duration-500"
-              style={{ width: `${Math.max(percentage, 5)}%` }}
+              style={{ width: `${Math.max(percentage, 4)}%` }}
             />
           </div>
         </div>
 
-        {/* Streamer camera box: visible only in ?preview=1 mode so OBS remains clean */}
-        {isPreviewMode && (
-          <div className="w-48 h-32 rounded-2xl bg-[#13141F]/50 border border-white/5 flex items-center justify-center text-xs text-zinc-600">
-            Streamer camera area
+        {/* Real-Time Latest Tipper HUD (Only renders when real tips exist on-chain) */}
+        {latestTip && (
+          <div className="rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm">
+            <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center text-lg flex-shrink-0">
+              {(TIER_STYLES[latestTip.tier] || TIER_STYLES[0]).emoji}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                <span>Latest Supporter</span>
+                <span className="font-mono text-[#14F195]">
+                  · {stats.totalTips} tip{stats.totalTips === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="text-xs font-bold text-white truncate">
+                {latestTip.displayName}{" "}
+                <span className="font-mono text-[#14F195]">
+                  ({latestTip.amountSol.toFixed(3)} SOL)
+                </span>
+              </div>
+            </div>
           </div>
         )}
       </div>

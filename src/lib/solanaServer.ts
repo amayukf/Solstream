@@ -178,6 +178,8 @@ async function rpcCall(
   }
 }
 
+type OverlayListener = (tip: OnChainTip) => void;
+
 interface GlobalSolStreamStore {
   txBySigCache: Map<string, OnChainTip | null>;
   creatorsCache: { items: OnChainCreator[]; fetchedAt: number } | null;
@@ -185,6 +187,7 @@ interface GlobalSolStreamStore {
   tipsCache: Map<string, { items: OnChainTip[]; fetchedAt: number }>;
   inflightTips: Map<string, Promise<OnChainTip[]>>;
   verifiedTipsMemory: Map<string, OnChainTip[]>;
+  overlayListeners: Map<string, Set<OverlayListener>>;
 }
 
 const globalForSolStream = globalThis as unknown as {
@@ -200,12 +203,37 @@ const store: GlobalSolStreamStore =
     tipsCache: new Map(),
     inflightTips: new Map(),
     verifiedTipsMemory: new Map(),
+    overlayListeners: new Map(),
   });
+
+if (!store.txBySigCache) store.txBySigCache = new Map();
+if (!store.tipsCache) store.tipsCache = new Map();
+if (!store.inflightTips) store.inflightTips = new Map();
+if (!store.verifiedTipsMemory) store.verifiedTipsMemory = new Map();
+if (!store.overlayListeners) store.overlayListeners = new Map();
 
 const txBySigCache = store.txBySigCache;
 const tipsCache = store.tipsCache;
 const inflightTips = store.inflightTips;
 const verifiedTipsMemory = store.verifiedTipsMemory;
+const overlayListeners = store.overlayListeners;
+
+export function subscribeToOverlayAlerts(
+  username: string,
+  listener: OverlayListener
+): () => void {
+  const key = username.toLowerCase();
+  let set = overlayListeners.get(key);
+  if (!set) {
+    set = new Set();
+    overlayListeners.set(key, set);
+  }
+  set.add(listener);
+  return () => {
+    set?.delete(listener);
+    if (set && set.size === 0) overlayListeners.delete(key);
+  };
+}
 
 export function invalidateCreatorCache(username?: string) {
   store.creatorsCache = null;
@@ -222,6 +250,18 @@ export function pushVerifiedTipToMemory(username: string, tip: OnChainTip) {
   const filtered = existing.filter((t) => t.signature !== tip.signature);
   verifiedTipsMemory.set(key, [tip, ...filtered]);
   invalidateCreatorCache(key);
+
+  // Instantly notify all connected OBS Overlay SSE streams (<10ms latency)
+  const listeners = overlayListeners.get(key);
+  if (listeners) {
+    for (const fn of Array.from(listeners)) {
+      try {
+        fn(tip);
+      } catch {
+        // Ignore disconnected stream listeners
+      }
+    }
+  }
 }
 
 export async function fetchAllOnChainCreators(
