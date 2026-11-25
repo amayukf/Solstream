@@ -105,30 +105,54 @@ export async function POST(req: Request) {
       );
     }
 
-    // 1. Resolve creator first (DB lookup -> fallback to Solana Devnet -> 404 if absent)
+    // 1. Resolve creator from DB and cross-check authority against Solana on-chain state
     let dbCreator = await getCreatorFromDb(username);
     let chainCreator = null;
-    if (!dbCreator) {
+    try {
       chainCreator = await fetchOnChainCreatorByUsername(username);
-      if (chainCreator) {
-        dbCreator = await upsertCreatorInDb(chainCreator);
-      }
+    } catch (err) {
+      console.error("POST /api/tips/verify chain creator lookup failed:", err);
+      return NextResponse.json(
+        { error: "Service temporarily unavailable" },
+        { status: 503 }
+      );
     }
 
-    const resolvedCreator = dbCreator || chainCreator;
-    if (!resolvedCreator) {
+    if (!dbCreator && chainCreator) {
+      dbCreator = await upsertCreatorInDb(chainCreator);
+    }
+
+    if (!dbCreator && !chainCreator) {
       return NextResponse.json(
         { error: "Creator not found" },
         { status: 404 }
       );
     }
 
-    if (!dbCreator?.id) {
+    if (
+      !dbCreator ||
+      !chainCreator ||
+      dbCreator.authority !== chainCreator.authority
+    ) {
+      console.error("POST /api/tips/verify creator authority mismatch:", {
+        username,
+        dbAuthority: dbCreator?.authority ?? null,
+        chainAuthority: chainCreator?.authority ?? null,
+      });
+      return NextResponse.json(
+        { error: "Creator verification conflict" },
+        { status: 409 }
+      );
+    }
+
+    if (!dbCreator.id) {
       return NextResponse.json(
         { error: "Service temporarily unavailable" },
         { status: 503 }
       );
     }
+
+    const resolvedCreator = { ...dbCreator, ...chainCreator };
 
     // 2. Strict zero-trust verification: Solstream send_tip instruction + PDA + signer + scoped TipEvent + creator authority match
     const tip = await fetchVerifiedTransactionTip(
