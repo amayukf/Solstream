@@ -196,6 +196,10 @@ export default function ObsOverlayPage({
 
   useEffect(() => {
     try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("edit") === "1") {
+        setIsEditLayout(true);
+      }
       const raw = localStorage.getItem(layoutStorageKey);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<OverlayLayout>;
@@ -229,9 +233,9 @@ export default function ObsOverlayPage({
   const startWidgetDrag = useCallback(
     (
       key: "alertPos" | "goalPos" | "supporterPos",
-      e: React.PointerEvent<HTMLDivElement>
+      e: React.MouseEvent<HTMLDivElement>
     ) => {
-      if (!isEditLayout) return;
+      if (!isEditLayout || e.button !== 0) return;
       const target = e.target as HTMLElement | null;
       if (target && target.closest("input, button, textarea")) return;
       e.preventDefault();
@@ -241,7 +245,7 @@ export default function ObsOverlayPage({
       const origin = layout[key];
       let latestLayout = layout;
 
-      const onMove = (ev: PointerEvent) => {
+      const onMove = (ev: MouseEvent) => {
         const next: OverlayLayout = {
           ...latestLayout,
           [key]: {
@@ -254,13 +258,13 @@ export default function ObsOverlayPage({
       };
 
       const onUp = () => {
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
         persistLayout(latestLayout);
       };
 
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
     },
     [isEditLayout, layout, persistLayout]
   );
@@ -762,7 +766,8 @@ export default function ObsOverlayPage({
         {displayAlert && (
           <div
             key={displayAlert.id}
-            onPointerDown={(e) => startWidgetDrag("alertPos", e)}
+            onMouseDown={(e) => startWidgetDrag("alertPos", e)}
+            onDoubleClick={() => setIsEditLayout(true)}
             style={{
               transform: `translate(${layout.alertPos.x}px, ${layout.alertPos.y}px)`,
             }}
@@ -882,7 +887,8 @@ export default function ObsOverlayPage({
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 w-full">
         {/* Live Goal Bar (Movable & Target Text Editable in Customize Layout mode) */}
         <div
-          onPointerDown={(e) => startWidgetDrag("goalPos", e)}
+          onMouseDown={(e) => startWidgetDrag("goalPos", e)}
+          onDoubleClick={() => setIsEditLayout(true)}
           style={{
             transform: `translate(${layout.goalPos.x}px, ${layout.goalPos.y}px)`,
           }}
@@ -958,7 +964,8 @@ export default function ObsOverlayPage({
         {/* Real-Time Latest Tipper HUD (Only renders when real tips exist on-chain) */}
         {latestTip && (
           <div
-            onPointerDown={(e) => startWidgetDrag("supporterPos", e)}
+            onMouseDown={(e) => startWidgetDrag("supporterPos", e)}
+            onDoubleClick={() => setIsEditLayout(true)}
             style={{
               transform: `translate(${layout.supporterPos.x}px, ${layout.supporterPos.y}px)`,
             }}
