@@ -4,6 +4,26 @@ import React, { use, useState, useEffect, useRef, useCallback } from "react";
 import { getStoredTips, getStoredCreator } from "@/lib/storage";
 import { getSupabaseClient } from "@/lib/supabaseClient";
 import { GiftIcon } from "@/components/tipping/GiftIcon";
+import { Move, Pencil, RotateCcw, Check } from "lucide-react";
+
+interface WidgetOffset {
+  x: number;
+  y: number;
+}
+
+interface OverlayLayout {
+  alertPos: WidgetOffset;
+  goalPos: WidgetOffset;
+  supporterPos: WidgetOffset;
+  customGoalTitle?: string;
+}
+
+const DEFAULT_OVERLAY_LAYOUT: OverlayLayout = {
+  alertPos: { x: 0, y: 0 },
+  goalPos: { x: 0, y: 0 },
+  supporterPos: { x: 0, y: 0 },
+  customGoalTitle: "",
+};
 
 interface AlertItem {
   id: string;
@@ -150,6 +170,10 @@ export default function ObsOverlayPage({
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const [latestTip, setLatestTip] = useState<AlertItem | null>(null);
   const [stats, setStats] = useState({ totalTips: 0, totalVolumeSol: 0 });
+  const [isEditLayout, setIsEditLayout] = useState(false);
+  const [isEditingGoalText, setIsEditingGoalText] = useState(false);
+  const [goalDraft, setGoalDraft] = useState("");
+  const [layout, setLayout] = useState<OverlayLayout>(DEFAULT_OVERLAY_LAYOUT);
 
   const seenSigs = useRef<Set<string>>(new Set());
   const audioBySig = useRef<Map<string, string>>(new Map());
@@ -167,6 +191,79 @@ export default function ObsOverlayPage({
     currentSol: 0,
     targetSol: 1.0,
   });
+
+  const layoutStorageKey = `solstream_overlay_layout_${username}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(layoutStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<OverlayLayout>;
+        setLayout({
+          alertPos: parsed.alertPos || { x: 0, y: 0 },
+          goalPos: parsed.goalPos || { x: 0, y: 0 },
+          supporterPos: parsed.supporterPos || { x: 0, y: 0 },
+          customGoalTitle:
+            typeof parsed.customGoalTitle === "string"
+              ? parsed.customGoalTitle
+              : "",
+        });
+      }
+    } catch {
+      // Ignore malformed localStorage layout
+    }
+  }, [layoutStorageKey]);
+
+  const persistLayout = useCallback(
+    (next: OverlayLayout) => {
+      setLayout(next);
+      try {
+        localStorage.setItem(layoutStorageKey, JSON.stringify(next));
+      } catch {
+        // Ignore storage quota errors
+      }
+    },
+    [layoutStorageKey]
+  );
+
+  const startWidgetDrag = useCallback(
+    (
+      key: "alertPos" | "goalPos" | "supporterPos",
+      e: React.PointerEvent<HTMLDivElement>
+    ) => {
+      if (!isEditLayout) return;
+      const target = e.target as HTMLElement | null;
+      if (target && target.closest("input, button, textarea")) return;
+      e.preventDefault();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origin = layout[key];
+      let latestLayout = layout;
+
+      const onMove = (ev: PointerEvent) => {
+        const next: OverlayLayout = {
+          ...latestLayout,
+          [key]: {
+            x: Math.round(origin.x + (ev.clientX - startX)),
+            y: Math.round(origin.y + (ev.clientY - startY)),
+          },
+        };
+        latestLayout = next;
+        setLayout(next);
+      };
+
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        persistLayout(latestLayout);
+      };
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [isEditLayout, layout, persistLayout]
+  );
 
   const cleanupAudioElement = useCallback((el?: HTMLAudioElement | null) => {
     const target = el ?? activeAudioRef.current;
@@ -563,16 +660,37 @@ export default function ObsOverlayPage({
     100
   );
 
-  const activeStyle = currentAlert
-    ? TIER_STYLES[currentAlert.tier] || TIER_STYLES[0]
+  const displayAlert: AlertItem | null =
+    currentAlert ||
+    (isEditLayout
+      ? latestTip || {
+          id: "layout-preview",
+          signature: "preview-replay-signature",
+          donor: "",
+          displayName: "Supporter Preview",
+          amountSol: 0.05,
+          tier: 3,
+          tierName: "Diamond",
+          message: "Drag this alert card anywhere so it never covers your face!",
+          timestamp: 0,
+          audioUrl: null,
+        }
+      : null);
+
+  const activeStyle = displayAlert
+    ? TIER_STYLES[displayAlert.tier] || TIER_STYLES[0]
     : TIER_STYLES[3];
+
+  const displayedGoalTitle = layout.customGoalTitle?.trim() || goal.title;
 
   return (
     <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-4 sm:p-8 group">
-      {/* Top Status Bar: Hidden during live OBS capture, shown on hover or ?preview=1 */}
+      {/* Top Status Bar: Hidden during live OBS capture, shown on hover, ?preview=1, or Edit Layout */}
       <div
-        className={`flex flex-wrap items-center justify-between gap-2 text-xs transition-opacity duration-300 ${
-          isPreviewMode ? "opacity-95" : "opacity-0 group-hover:opacity-100"
+        className={`relative z-30 flex flex-wrap items-center justify-between gap-2 text-xs transition-opacity duration-300 ${
+          isPreviewMode || isEditLayout
+            ? "opacity-95"
+            : "opacity-0 group-hover:opacity-100"
         }`}
       >
         <div className="px-3.5 py-1.5 rounded-full bg-black/80 border border-white/10 text-zinc-300 font-medium flex items-center gap-2 backdrop-blur-md">
@@ -587,21 +705,79 @@ export default function ObsOverlayPage({
           </span>
         </div>
 
-        {latestTip && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={replayLatestRealTip}
-            className="px-4 py-1.5 rounded-full bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-bold text-[11px] shadow-lg transition-colors cursor-pointer"
+            onClick={() => {
+              setIsEditLayout((prev) => !prev);
+              setIsEditingGoalText(false);
+            }}
+            className={`px-3.5 py-1.5 rounded-full font-bold text-[11px] shadow-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+              isEditLayout
+                ? "bg-[#9945FF] text-white"
+                : "bg-black/80 hover:bg-black text-zinc-200 border border-white/15"
+            }`}
           >
-            Replay Latest Real Tip
+            {isEditLayout ? (
+              <>
+                <Check className="w-3.5 h-3.5" />
+                <span>Done Editing</span>
+              </>
+            ) : (
+              <>
+                <Move className="w-3.5 h-3.5" />
+                <span>Customize Layout</span>
+              </>
+            )}
           </button>
-        )}
+
+          {isEditLayout && (
+            <button
+              type="button"
+              onClick={() => {
+                persistLayout(DEFAULT_OVERLAY_LAYOUT);
+                setIsEditingGoalText(false);
+              }}
+              className="px-3 py-1.5 rounded-full bg-black/80 hover:bg-black text-zinc-300 border border-white/15 font-semibold text-[11px] shadow-lg transition-colors cursor-pointer inline-flex items-center gap-1"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset</span>
+            </button>
+          )}
+
+          {latestTip && (
+            <button
+              type="button"
+              onClick={replayLatestRealTip}
+              className="px-4 py-1.5 rounded-full bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-bold text-[11px] shadow-lg transition-colors cursor-pointer"
+            >
+              Replay Latest Real Tip
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* CENTER REAL-TIME ALERT POPUP */}
+      {/* CENTER REAL-TIME ALERT POPUP (Movable in Customize Layout mode) */}
       <div className="flex-1 flex items-center justify-center">
-        {currentAlert && (
-          <div key={currentAlert.id} className="relative animate-bounce-short w-full max-w-2xl">
+        {displayAlert && (
+          <div
+            key={displayAlert.id}
+            onPointerDown={(e) => startWidgetDrag("alertPos", e)}
+            style={{
+              transform: `translate(${layout.alertPos.x}px, ${layout.alertPos.y}px)`,
+            }}
+            className={`relative animate-bounce-short w-full max-w-2xl ${
+              isEditLayout
+                ? "cursor-move ring-2 ring-dashed ring-[#14F195]/80 rounded-3xl"
+                : ""
+            }`}
+          >
+            {isEditLayout && (
+              <div className="absolute -top-7 left-3 z-20 px-2.5 py-0.5 rounded-full bg-[#14F195] text-[#090A0F] text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow">
+                <Move className="w-3 h-3" />
+                <span>Drag Alert Card</span>
+              </div>
+            )}
             {/* Dynamic tier ambient glow */}
             <div
               className="absolute inset-0 blur-3xl rounded-3xl opacity-70"
@@ -618,7 +794,7 @@ export default function ObsOverlayPage({
                 {/* Top Header: Tipper Name, Wallet, Tier & Amount */}
                 <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
                   <div className="flex items-center gap-4 min-w-0">
-                    <GiftIcon tier={currentAlert.tier} size="lg" />
+                    <GiftIcon tier={displayAlert.tier} size="lg" />
 
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -628,16 +804,16 @@ export default function ObsOverlayPage({
                         >
                           {activeStyle.name} Tier
                         </span>
-                        {currentAlert.donor && (
+                        {displayAlert.donor && (
                           <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 font-mono text-[10px] text-zinc-300">
-                            {currentAlert.donor.slice(0, 4)}...
-                            {currentAlert.donor.slice(-4)}
+                            {displayAlert.donor.slice(0, 4)}...
+                            {displayAlert.donor.slice(-4)}
                           </span>
                         )}
                       </div>
 
                       <h2 className="font-display text-2xl font-bold text-white tracking-tight truncate">
-                        {currentAlert.displayName}
+                        {displayAlert.displayName}
                       </h2>
                     </div>
                   </div>
@@ -645,11 +821,11 @@ export default function ObsOverlayPage({
                   {/* Amount & Live USD */}
                   <div className="text-right flex-shrink-0">
                     <div className="font-mono tabular-nums text-2xl sm:text-3xl font-black text-[#14F195]">
-                      +{currentAlert.amountSol.toFixed(3)} SOL
+                      +{displayAlert.amountSol.toFixed(3)} SOL
                     </div>
                     {solUsdPrice && (
                       <div className="font-mono tabular-nums text-xs text-zinc-400">
-                        ≈ ${(currentAlert.amountSol * solUsdPrice).toFixed(2)} USD
+                        ≈ ${(displayAlert.amountSol * solUsdPrice).toFixed(2)} USD
                       </div>
                     )}
                   </div>
@@ -658,7 +834,7 @@ export default function ObsOverlayPage({
                 {/* Message Box + Animated Voice Waveform */}
                 <div className="flex items-center gap-4 bg-black/50 border border-white/10 rounded-2xl p-4">
                   <p className="flex-1 text-base text-white font-medium leading-snug">
-                    &ldquo;{currentAlert.message}&rdquo;
+                    &ldquo;{displayAlert.message}&rdquo;
                   </p>
 
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
@@ -670,7 +846,7 @@ export default function ObsOverlayPage({
                       <span className="w-1.5 h-2 bg-[#00F0FF] rounded-full animate-pulse delay-200" />
                     </div>
                     <span className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">
-                      {currentAlert.audioUrl ? "ElevenLabs AI" : "AI Voice"}
+                      {displayAlert.audioUrl ? "ElevenLabs AI" : "AI Voice"}
                     </span>
                   </div>
                 </div>
@@ -681,10 +857,10 @@ export default function ObsOverlayPage({
                     <span className="w-1.5 h-1.5 rounded-full bg-[#14F195]" />
                     Verified on Solana Devnet
                   </span>
-                  {!currentAlert.signature.includes("-replay-") && (
+                  {!displayAlert.signature.includes("-replay-") && (
                     <span>
-                      tx: {currentAlert.signature.slice(0, 6)}...
-                      {currentAlert.signature.slice(-6)}
+                      tx: {displayAlert.signature.slice(0, 6)}...
+                      {displayAlert.signature.slice(-6)}
                     </span>
                   )}
                 </div>
@@ -704,11 +880,68 @@ export default function ObsOverlayPage({
 
       {/* BOTTOM LIVE HUD: STREAM GOAL BAR + REAL-TIME LATEST TIPPER */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 w-full">
-        {/* Live Goal Bar */}
-        <div className="w-full max-w-md rounded-2xl bg-[#0F101A]/90 border border-white/10 p-4 backdrop-blur-md shadow-2xl">
-          <div className="flex items-center justify-between text-xs font-bold mb-2">
-            <span className="font-display text-white">{goal.title}</span>
-            <span className="text-[#14F195] font-mono tabular-nums">
+        {/* Live Goal Bar (Movable & Target Text Editable in Customize Layout mode) */}
+        <div
+          onPointerDown={(e) => startWidgetDrag("goalPos", e)}
+          style={{
+            transform: `translate(${layout.goalPos.x}px, ${layout.goalPos.y}px)`,
+          }}
+          className={`relative w-full max-w-md rounded-2xl bg-[#0F101A]/90 border border-white/10 p-4 backdrop-blur-md shadow-2xl ${
+            isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#9945FF]/80" : ""
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2 text-xs font-bold mb-2">
+            {isEditLayout && isEditingGoalText ? (
+              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                <input
+                  type="text"
+                  value={goalDraft}
+                  maxLength={48}
+                  autoFocus
+                  onChange={(e) => setGoalDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      persistLayout({ ...layout, customGoalTitle: goalDraft });
+                      setIsEditingGoalText(false);
+                    } else if (e.key === "Escape") {
+                      setIsEditingGoalText(false);
+                    }
+                  }}
+                  placeholder={goal.title}
+                  className="w-full px-2 py-0.5 rounded bg-black/70 border border-[#14F195]/60 text-white text-xs focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    persistLayout({ ...layout, customGoalTitle: goalDraft });
+                    setIsEditingGoalText(false);
+                  }}
+                  className="px-2 py-0.5 rounded bg-[#14F195] text-[#090A0F] text-[10px] font-black cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-display text-white truncate">
+                  {displayedGoalTitle}
+                </span>
+                {isEditLayout && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGoalDraft(displayedGoalTitle);
+                      setIsEditingGoalText(true);
+                    }}
+                    title="Edit goal text"
+                    className="p-1 rounded bg-white/10 hover:bg-white/20 text-zinc-200 cursor-pointer flex-shrink-0"
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            )}
+            <span className="text-[#14F195] font-mono tabular-nums flex-shrink-0">
               {goal.currentSol.toFixed(3)} / {goal.targetSol.toFixed(1)} SOL (
               {percentage}%)
             </span>
@@ -724,7 +957,15 @@ export default function ObsOverlayPage({
 
         {/* Real-Time Latest Tipper HUD (Only renders when real tips exist on-chain) */}
         {latestTip && (
-          <div className="rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm">
+          <div
+            onPointerDown={(e) => startWidgetDrag("supporterPos", e)}
+            style={{
+              transform: `translate(${layout.supporterPos.x}px, ${layout.supporterPos.y}px)`,
+            }}
+            className={`rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm ${
+              isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#00F0FF]/80" : ""
+            }`}
+          >
             <GiftIcon tier={latestTip.tier} size="md" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
