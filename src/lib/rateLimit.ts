@@ -15,16 +15,23 @@ const buckets: Map<string, RateLimitBucketEntry> =
 
 const MAX_BUCKET_ENTRIES = 10_000;
 
+/**
+ * Resolves the client IP for rate-limiting.
+ * Prefers trusted edge/proxy headers (`cf-connecting-ip`, then `x-real-ip`)
+ * before `x-forwarded-for` so a spoofed XFF header cannot override a platform
+ * header. Direct self-hosted deployments must sit behind a trusted reverse
+ * proxy that strips/sets these headers.
+ */
 export function getClientIp(req: Request): string {
+  const cfIp = req.headers.get("cf-connecting-ip")?.trim();
+  if (cfIp) return cfIp;
+  const realIp = req.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
   const xff = req.headers.get("x-forwarded-for");
   if (xff) {
     const first = xff.split(",")[0]?.trim();
     if (first) return first;
   }
-  const realIp = req.headers.get("x-real-ip")?.trim();
-  if (realIp) return realIp;
-  const cfIp = req.headers.get("cf-connecting-ip")?.trim();
-  if (cfIp) return cfIp;
   return "local";
 }
 
