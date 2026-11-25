@@ -132,6 +132,16 @@ function ClaimHandleForm() {
       setError(`@${cleanHandle} is already claimed on Devnet by another wallet. Choose a different handle.`);
       return;
     }
+    const cleanGoalTitle = goalTitle.trim() || "Stream Goal";
+    if (new TextEncoder().encode(cleanGoalTitle).length > 64) {
+      setError("Goal title exceeds the 64-byte on-chain UTF-8 limit.");
+      return;
+    }
+    const targetNum = parseFloat(goalTarget);
+    if (isNaN(targetNum) || targetNum < 0.01) {
+      setError("Goal target must be at least 0.01 SOL.");
+      return;
+    }
     setError(null);
     setIsLoading(true);
 

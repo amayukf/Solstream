@@ -83,6 +83,11 @@ export default function CreatorDashboardPage() {
       });
       if (res.ok) {
         const data = await res.json();
+        if (data?.creator) {
+          setCurrentGoalSol(
+            (Number(data.creator.goalCurrentLamports) || 0) / 1_000_000_000
+          );
+        }
         const chainTips: TipRecord[] = (data?.tips || []).map((t: any) => ({
           signature: t.signature,
           donor: t.donor,
@@ -142,41 +147,52 @@ export default function CreatorDashboardPage() {
           const walletCreator = getCreatorByWallet(walletStr);
           const active = getActiveHandle();
           const stored = walletCreator || (active ? getStoredCreator(active) : null);
-          const onChainHandle = (acc.username || stored?.username || "amayu").toLowerCase();
+          const onChainHandle = (acc.username || stored?.username || "").toLowerCase();
 
-          setUsername(onChainHandle);
-          setIsInitialized(true);
+          if (onChainHandle) {
+            setUsername(onChainHandle);
+            setIsInitialized(true);
 
-          const target = acc.goalTargetLamports || acc.goal_target_lamports;
-          const current = acc.goalCurrentLamports || acc.goal_current_lamports;
+            const target = acc.goalTargetLamports ?? acc.goal_target_lamports;
+            const current = acc.goalCurrentLamports ?? acc.goal_current_lamports;
 
-          setGoalTitle(acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal");
-          if (target !== undefined && target !== null) {
-            const targetVal = typeof target === "number" ? target : target.toNumber ? target.toNumber() : Number(target);
+            const targetVal =
+              target !== undefined && target !== null
+                ? typeof target === "number"
+                  ? target
+                  : target.toNumber
+                  ? target.toNumber()
+                  : Number(target)
+                : stored?.goalTargetLamports || 3_000_000_000;
+
+            const currentVal =
+              current !== undefined && current !== null
+                ? typeof current === "number"
+                  ? current
+                  : current.toNumber
+                  ? current.toNumber()
+                  : Number(current)
+                : stored?.goalCurrentLamports || 0;
+
+            setGoalTitle(acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal");
             setGoalTargetSol((targetVal / 1_000_000_000).toString());
-          }
-          if (current !== undefined && current !== null) {
-            const currentVal = typeof current === "number" ? current : current.toNumber ? current.toNumber() : Number(current);
             setCurrentGoalSol(currentVal / 1_000_000_000);
-          }
-          if (acc.voiceId || acc.voice_id || stored?.voiceId) {
             setSelectedVoice(acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id);
+
+            saveStoredCreator({
+              username: onChainHandle,
+              authority: walletStr,
+              voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
+              goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
+              goalTargetLamports: targetVal,
+              goalCurrentLamports: currentVal,
+              createdAt: Date.now(),
+            });
+
+            refreshDashboardTips(onChainHandle);
+            setIsCheckingAccount(false);
+            return;
           }
-
-          // Sync to localStorage
-          saveStoredCreator({
-            username: onChainHandle,
-            authority: walletStr,
-            voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
-            goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
-            goalTargetLamports: target ? (typeof target === "number" ? target : target.toNumber ? target.toNumber() : Number(target)) : (stored?.goalTargetLamports || 3_000_000_000),
-            goalCurrentLamports: current ? (typeof current === "number" ? current : current.toNumber ? current.toNumber() : Number(current)) : (stored?.goalCurrentLamports || 0),
-            createdAt: Date.now(),
-          });
-
-          refreshDashboardTips(onChainHandle);
-          setIsCheckingAccount(false);
-          return;
         }
       } catch (e) {
         console.log("On-chain check finished:", e);
@@ -295,6 +311,11 @@ export default function CreatorDashboardPage() {
         goalCurrentLamports: 0,
         createdAt: Date.now(),
       });
+      await fetch("/api/creators/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+      }).catch(() => {});
       setStatusMessage(`✅ @${username} successfully initialized on Solana Devnet!`);
     } catch (err: any) {
       console.error(err);
@@ -305,15 +326,11 @@ export default function CreatorDashboardPage() {
         errMsg.includes("AccountAlreadyInUse")
       ) {
         setIsInitialized(true);
-        saveStoredCreator({
-          username,
-          authority: publicKey.toBase58(),
-          voiceId: selectedVoice,
-          goalTitle,
-          goalTargetLamports: Math.round(parseFloat(goalTargetSol) * 1_000_000_000),
-          goalCurrentLamports: 0,
-          createdAt: Date.now(),
-        });
+        await fetch("/api/creators/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+        }).catch(() => {});
         setStatusMessage(`✅ @${username} is already active on Solana Devnet!`);
       } else {
         setStatusMessage(`❌ Error initializing: ${errMsg}`);
@@ -326,18 +343,29 @@ export default function CreatorDashboardPage() {
   const handleUpdateGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!connected || !publicKey || !username) return;
-    setIsUpdatingGoal(true);
     setStatusMessage(null);
+
+    const cleanGoalTitle = goalTitle.trim() || "Stream Goal";
+    if (new TextEncoder().encode(cleanGoalTitle).length > 64) {
+      setStatusMessage("❌ Goal title exceeds the 64-byte on-chain UTF-8 limit.");
+      return;
+    }
+    const targetNum = parseFloat(goalTargetSol);
+    if (isNaN(targetNum) || targetNum < 0.01) {
+      setStatusMessage("❌ Goal target must be at least 0.01 SOL.");
+      return;
+    }
+
+    setIsUpdatingGoal(true);
     try {
-      const targetNum = parseFloat(goalTargetSol) || 1.0;
       const lamports = Math.round(targetNum * 1_000_000_000);
-      await updateGoal(lamports, goalTitle);
+      await updateGoal(lamports, cleanGoalTitle);
       setCurrentGoalSol(0);
       saveStoredCreator({
         username,
         authority: publicKey.toBase58(),
         voiceId: selectedVoice,
-        goalTitle,
+        goalTitle: cleanGoalTitle,
         goalTargetLamports: lamports,
         goalCurrentLamports: 0,
         createdAt: Date.now(),
@@ -382,9 +410,8 @@ export default function CreatorDashboardPage() {
     }
   };
 
-  const effectiveGoalSol = Math.max(currentGoalSol, totalVolumeSol);
   const goalPercentage = Math.min(
-    Math.round((effectiveGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
+    Math.round((currentGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
     100
   );
 
