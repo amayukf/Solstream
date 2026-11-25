@@ -8,6 +8,22 @@ import { PROGRAM_ID } from "@/lib/constants";
 import { IDL } from "@/idl/solstream";
 
 const DEFAULT_PUBKEY = new PublicKey("11111111111111111111111111111111");
+const HANDLE_REGISTRY_DISC = [120, 46, 76, 126, 63, 168, 217, 232];
+
+export function decodeHandleRegistry(buffer: Uint8Array | Buffer) {
+  try {
+    const buf = Buffer.from(buffer);
+    if (buf.length < 8 + 32 + 1) return null;
+    for (let i = 0; i < 8; i++) {
+      if (buf[i] !== HANDLE_REGISTRY_DISC[i]) return null;
+    }
+    const authority = new PublicKey(buf.slice(8, 40)).toBase58();
+    const bump = buf.readUInt8(40);
+    return { authority, bump };
+  } catch {
+    return null;
+  }
+}
 
 export function decodeCreatorAccount(buffer: Uint8Array | Buffer) {
   try {
@@ -105,6 +121,41 @@ export function useSolStreamProgram() {
     return pda;
   }, []);
 
+  const getHandlePda = useCallback((username: string) => {
+    const clean = username.trim().toLowerCase();
+    const [pda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("handle"), Buffer.from(clean, "utf8")],
+      PROGRAM_ID
+    );
+    return pda;
+  }, []);
+
+  const fetchHandleRegistry = useCallback(
+    async (username: string) => {
+      const clean = username.trim().toLowerCase();
+      if (!clean) return null;
+      const pda = getHandlePda(clean);
+      const info = await connection.getAccountInfo(pda, "confirmed");
+      if (!info || !info.data || info.data.length === 0) return null;
+      const decoded = decodeHandleRegistry(info.data);
+      if (decoded) {
+        return { pda: pda.toBase58(), ...decoded };
+      }
+      if (program) {
+        const acc = await (program.account as any).handleRegistry.fetchNullable(pda);
+        if (acc?.authority) {
+          return {
+            pda: pda.toBase58(),
+            authority: acc.authority.toBase58 ? acc.authority.toBase58() : String(acc.authority),
+            bump: Number(acc.bump) || 0,
+          };
+        }
+      }
+      return null;
+    },
+    [connection, getHandlePda, program]
+  );
+
   const fetchCreatorAccount = useCallback(
     async (pda: PublicKey) => {
       // 1. Try Anchor high-level fetch first
@@ -151,26 +202,52 @@ export function useSolStreamProgram() {
       goalTitle: string
     ) => {
       if (!wallet.publicKey || !program) throw new Error("Wallet not connected");
+      const cleanUsername = username.trim().toLowerCase();
       const creatorPda = getCreatorPda(wallet.publicKey);
+      const handlePda = getHandlePda(cleanUsername);
       const methods = (program as any).methods;
 
       const tx = await methods
         .initializeCreator(
-          username,
+          cleanUsername,
           voiceId,
           new BN(goalTargetLamports.toString()),
           goalTitle
         )
         .accounts({
           creatorAccount: creatorPda,
+          handleRegistry: handlePda,
           authority: wallet.publicKey,
           systemProgram: SystemProgram.programId,
         })
         .rpc();
 
-      return { tx, pda: creatorPda };
+      return { tx, pda: creatorPda, handlePda };
     },
-    [program, wallet.publicKey, getCreatorPda]
+    [program, wallet.publicKey, getCreatorPda, getHandlePda]
+  );
+
+  const registerExistingHandle = useCallback(
+    async (username: string) => {
+      if (!wallet.publicKey || !program) throw new Error("Wallet not connected");
+      const cleanUsername = username.trim().toLowerCase();
+      const creatorPda = getCreatorPda(wallet.publicKey);
+      const handlePda = getHandlePda(cleanUsername);
+      const methods = (program as any).methods;
+
+      const tx = await methods
+        .registerExistingHandle()
+        .accounts({
+          creatorAccount: creatorPda,
+          handleRegistry: handlePda,
+          authority: wallet.publicKey,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      return { tx, handlePda };
+    },
+    [program, wallet.publicKey, getCreatorPda, getHandlePda]
   );
 
   const sendTip = useCallback(
@@ -243,8 +320,11 @@ export function useSolStreamProgram() {
     program,
     provider,
     getCreatorPda,
+    getHandlePda,
     fetchCreatorAccount,
+    fetchHandleRegistry,
     initializeCreator,
+    registerExistingHandle,
     sendTip,
     updateGoal,
     updateVoice,

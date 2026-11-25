@@ -26,7 +26,12 @@ function ClaimHandleForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { connected, publicKey } = useWallet();
-  const { initializeCreator, getCreatorPda, fetchCreatorAccount } = useSolStreamProgram();
+  const {
+    initializeCreator,
+    getCreatorPda,
+    fetchCreatorAccount,
+    fetchHandleRegistry,
+  } = useSolStreamProgram();
 
   const [handle, setHandle] = useState("");
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
@@ -37,6 +42,17 @@ function ClaimHandleForm() {
 
   const [existingOnChainHandle, setExistingOnChainHandle] = useState<string | null>(null);
   const [registeredHandles, setRegisteredHandles] = useState<Record<string, string>>({});
+  const [handleLookup, setHandleLookup] = useState<{
+    handle: string;
+    checking: boolean;
+    authority: string | null;
+    error: string | null;
+  }>({
+    handle: "",
+    checking: false,
+    authority: null,
+    error: null,
+  });
 
   useEffect(() => {
     fetch("/api/creators")
@@ -56,7 +72,68 @@ function ClaimHandleForm() {
   }, []);
 
   const cleanHandle = handle.trim().toLowerCase();
-  const handleOwner = cleanHandle ? registeredHandles[cleanHandle] : undefined;
+
+  // Check HandleRegistry PDA directly on-chain whenever cleanHandle changes
+  useEffect(() => {
+    if (!cleanHandle) {
+      setHandleLookup({
+        handle: "",
+        checking: false,
+        authority: null,
+        error: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    setHandleLookup({
+      handle: cleanHandle,
+      checking: true,
+      authority: null,
+      error: null,
+    });
+
+    const timer = setTimeout(async () => {
+      try {
+        const reg = await fetchHandleRegistry(cleanHandle);
+        if (!cancelled) {
+          setHandleLookup({
+            handle: cleanHandle,
+            checking: false,
+            authority: reg?.authority || null,
+            error: null,
+          });
+        }
+      } catch (err: any) {
+        if (!cancelled) {
+          setHandleLookup({
+            handle: cleanHandle,
+            checking: false,
+            authority: null,
+            error: err?.message || "On-chain handle lookup failed",
+          });
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [cleanHandle, fetchHandleRegistry]);
+
+  const onChainHandleOwner =
+    handleLookup.handle === cleanHandle ? handleLookup.authority : null;
+  const handleLookupError =
+    handleLookup.handle === cleanHandle ? handleLookup.error : null;
+  const isCheckingHandle =
+    Boolean(cleanHandle) &&
+    handleLookup.handle === cleanHandle &&
+    handleLookup.checking;
+
+  const handleOwner = cleanHandle
+    ? onChainHandleOwner || registeredHandles[cleanHandle]
+    : undefined;
   const isHandleTakenByOther = Boolean(
     handleOwner && (!publicKey || handleOwner !== publicKey.toBase58())
   );
@@ -146,6 +223,14 @@ function ClaimHandleForm() {
     setIsLoading(true);
 
     try {
+      // Fresh on-chain HandleRegistry PDA check before submitting transaction
+      const latestRegistry = await fetchHandleRegistry(cleanHandle);
+      if (latestRegistry && latestRegistry.authority !== publicKey.toBase58()) {
+        setError(`@${cleanHandle} is already registered on-chain to another wallet.`);
+        setIsLoading(false);
+        return;
+      }
+
       const lamports = Math.round(parseFloat(goalTarget) * 1_000_000_000);
 
       // Call Anchor on-chain initialize_creator
@@ -294,17 +379,25 @@ function ClaimHandleForm() {
               {cleanHandle && (
                 <span
                   className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-                    isHandleTakenByOther
+                    isCheckingHandle
+                      ? "text-zinc-300 bg-white/5 border-white/10"
+                      : isHandleTakenByOther
                       ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
                       : isHandleOwnedBySelf
                       ? "text-[#14F195] bg-[#14F195]/10 border-[#14F195]/20"
+                      : handleLookupError
+                      ? "text-amber-300 bg-amber-500/10 border-amber-500/20"
                       : "text-[#14F195] bg-[#14F195]/10 border-[#14F195]/20"
                   }`}
                 >
-                  {isHandleTakenByOther
+                  {isCheckingHandle
+                    ? "Checking..."
+                    : isHandleTakenByOther
                     ? "Taken"
                     : isHandleOwnedBySelf
                     ? "Owned by you"
+                    : handleLookupError
+                    ? "Check failed"
                     : "Available"}
                 </span>
               )}

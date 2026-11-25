@@ -11,6 +11,7 @@
       "discriminator": [29, 153, 44, 99, 52, 172, 81, 115],
       "accounts": [
         { "name": "creator_account", "writable": true },
+        { "name": "handle_registry", "writable": true },
         { "name": "authority", "writable": true, "signer": true },
         { "name": "system_program", "address": "11111111111111111111111111111111" }
       ],
@@ -20,6 +21,17 @@
         { "name": "goal_target", "type": "u64" },
         { "name": "goal_title", "type": "string" }
       ]
+    },
+    {
+      "name": "register_existing_handle",
+      "discriminator": [155, 216, 71, 55, 163, 90, 3, 69],
+      "accounts": [
+        { "name": "creator_account" },
+        { "name": "handle_registry", "writable": true },
+        { "name": "authority", "writable": true, "signer": true },
+        { "name": "system_program", "address": "11111111111111111111111111111111" }
+      ],
+      "args": []
     },
     {
       "name": "send_tip",
@@ -65,6 +77,10 @@
     {
       "name": "CreatorAccount",
       "discriminator": [222, 163, 32, 169, 204, 8, 200, 32]
+    },
+    {
+      "name": "HandleRegistry",
+      "discriminator": [120, 46, 76, 126, 63, 168, 217, 232]
     }
   ],
   "events": [
@@ -98,6 +114,16 @@
           { "name": "goal_current_lamports", "type": "u64" },
           { "name": "total_tips", "type": "u64" },
           { "name": "total_volume", "type": "u64" },
+          { "name": "bump", "type": "u8" }
+        ]
+      }
+    },
+    {
+      "name": "HandleRegistry",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          { "name": "authority", "type": "pubkey" },
           { "name": "bump", "type": "u8" }
         ]
       }

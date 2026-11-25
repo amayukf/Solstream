@@ -18,6 +18,12 @@ describe("solstream", () => {
     program.programId
   );
 
+  const getHandlePda = (username: string) =>
+    PublicKey.findProgramAddressSync(
+      [Buffer.from("handle"), Buffer.from(username, "utf8")],
+      program.programId
+    )[0];
+
   const airdrop = async (kp: Keypair, sol: number) => {
     const sig = await provider.connection.requestAirdrop(kp.publicKey, sol * LAMPORTS_PER_SOL);
     await provider.connection.confirmTransaction(sig, "confirmed");
@@ -57,11 +63,15 @@ describe("solstream", () => {
     await airdrop(stranger, 1);
   });
 
-  it("initializes a creator", async () => {
+  it("initializes a creator and reserves the handle in HandleRegistry", async () => {
+    const handle = "kmoney";
+    const handlePda = getHandlePda(handle);
+
     await program.methods
-      .initializeCreator("kmoney", "pNInz6obpgDQGcFmaJgB", new BN(3 * LAMPORTS_PER_SOL), "Mic Upgrade")
+      .initializeCreator(handle, "pNInz6obpgDQGcFmaJgB", new BN(3 * LAMPORTS_PER_SOL), "Mic Upgrade")
       .accounts({
         creatorAccount: creatorPda,
+        handleRegistry: handlePda,
         authority: creator.publicKey,
         systemProgram: SystemProgram.programId,
       })
@@ -69,8 +79,36 @@ describe("solstream", () => {
       .rpc();
 
     const acc = await program.account.creatorAccount.fetch(creatorPda);
-    assert.equal(acc.username, "kmoney");
+    assert.equal(acc.username, handle);
     assert.equal(acc.goalCurrentLamports.toNumber(), 0);
+
+    const reg = await (program.account as any).handleRegistry.fetch(handlePda);
+    assert.equal(reg.authority.toBase58(), creator.publicKey.toBase58());
+  });
+
+  it("rejects duplicate handles claimed by a second wallet", async () => {
+    const secondWallet = Keypair.generate();
+    await airdrop(secondWallet, 1);
+    const [secondCreatorPda] = PublicKey.findProgramAddressSync(
+      [Buffer.from("creator"), secondWallet.publicKey.toBuffer()],
+      program.programId
+    );
+    const duplicateHandlePda = getHandlePda("kmoney");
+
+    await expectFail(
+      () =>
+        program.methods
+          .initializeCreator("kmoney", "pNInz6obpgDQGcFmaJgB", new BN(1 * LAMPORTS_PER_SOL), "Copycat")
+          .accounts({
+            creatorAccount: secondCreatorPda,
+            handleRegistry: duplicateHandlePda,
+            authority: secondWallet.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([secondWallet])
+          .rpc(),
+      "already in use"
+    );
   });
 
   it("rejects invalid usernames", async () => {
@@ -80,14 +118,56 @@ describe("solstream", () => {
       [Buffer.from("creator"), other.publicKey.toBuffer()],
       program.programId
     );
+    const badHandlePda = getHandlePda("Bad Name!");
     await expectFail(
       () =>
         program.methods
           .initializeCreator("Bad Name!", "v", new BN(1), "t")
-          .accounts({ creatorAccount: pda, authority: other.publicKey, systemProgram: SystemProgram.programId })
+          .accounts({
+            creatorAccount: pda,
+            handleRegistry: badHandlePda,
+            authority: other.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
           .signers([other])
           .rpc(),
       "InvalidUsername"
+    );
+  });
+
+  it("enforces authority and one-time initialization on register_existing_handle", async () => {
+    const handlePda = getHandlePda("kmoney");
+
+    // Stranger cannot register someone else's CreatorAccount handle
+    await expectFail(
+      () =>
+        program.methods
+          .registerExistingHandle()
+          .accounts({
+            creatorAccount: creatorPda,
+            handleRegistry: handlePda,
+            authority: stranger.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([stranger])
+          .rpc(),
+      "Error"
+    );
+
+    // Once HandleRegistry exists for @kmoney, registering again fails cleanly
+    await expectFail(
+      () =>
+        program.methods
+          .registerExistingHandle()
+          .accounts({
+            creatorAccount: creatorPda,
+            handleRegistry: handlePda,
+            authority: creator.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([creator])
+          .rpc(),
+      "already in use"
     );
   });
 

@@ -46,6 +46,19 @@ pub mod solstream {
         creator.total_tips = 0;
         creator.total_volume = 0;
         creator.bump = ctx.bumps.creator_account;
+
+        let registry = &mut ctx.accounts.handle_registry;
+        registry.authority = ctx.accounts.authority.key();
+        registry.bump = ctx.bumps.handle_registry;
+        Ok(())
+    }
+
+    /// Backfills a HandleRegistry PDA for legacy CreatorAccount holders created before unique handle enforcement.
+    pub fn register_existing_handle(ctx: Context<RegisterExistingHandle>) -> Result<()> {
+        let creator = &ctx.accounts.creator_account;
+        let registry = &mut ctx.accounts.handle_registry;
+        registry.authority = creator.authority;
+        registry.bump = ctx.bumps.handle_registry;
         Ok(())
     }
 
@@ -137,7 +150,15 @@ pub struct CreatorAccount {
     pub bump: u8,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct HandleRegistry {
+    pub authority: Pubkey,
+    pub bump: u8,
+}
+
 #[derive(Accounts)]
+#[instruction(username: String)]
 pub struct InitializeCreator<'info> {
     #[account(
         init,
@@ -147,6 +168,35 @@ pub struct InitializeCreator<'info> {
         bump
     )]
     pub creator_account: Account<'info, CreatorAccount>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + HandleRegistry::INIT_SPACE,
+        seeds = [b"handle", username.as_bytes()],
+        bump
+    )]
+    pub handle_registry: Account<'info, HandleRegistry>,
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct RegisterExistingHandle<'info> {
+    #[account(
+        seeds = [b"creator", authority.key().as_ref()],
+        bump = creator_account.bump,
+        has_one = authority
+    )]
+    pub creator_account: Account<'info, CreatorAccount>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + HandleRegistry::INIT_SPACE,
+        seeds = [b"handle", creator_account.username.as_bytes()],
+        bump
+    )]
+    pub handle_registry: Account<'info, HandleRegistry>,
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,

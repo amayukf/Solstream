@@ -20,7 +20,7 @@ Files: `src/app/overlay/[username]/page.tsx`, `src/app/layout.tsx`, `src/app/glo
 - Keep SSE, Supabase Realtime, BroadcastChannel, replay, and preview working.
 Acceptance: 3 rapid tips display sequentially, each ~7s; overlay transparent in OBS; one AudioContext; typecheck passes.
 
-## [ ] Fix 3 — Unique usernames on-chain
+## [x] Fix 3 — Unique usernames on-chain
 Files: `programs/solstream/src/lib.rs`, `src/idl/solstream.json`, `src/hooks/useSolStreamProgram.ts`, `src/app/claim/page.tsx`, `tests/solstream.ts`.
 - Add `HandleRegistry { authority: Pubkey, bump: u8 }`.
 - Add `handle_registry` to `InitializeCreator` with seeds `[b"handle", username.as_bytes()]`, `init`, payer authority.
