@@ -38,6 +38,16 @@ const ACTIVE_HANDLE_KEY = "solstream_active_handle";
 
 export const MAX_STORED_CREATORS = 50;
 export const MAX_STORED_TIPS_PER_CREATOR = 100;
+const PENDING_VERIFY_KEY = "solstream_pending_verify";
+const MAX_PENDING_VERIFY = 50;
+const PENDING_VERIFY_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface PendingTipVerification {
+  signature: string;
+  username: string;
+  createdAt: number;
+  attempts: number;
+}
 
 export function getStoredCreators(): Record<string, CreatorProfile> {
   if (typeof window === "undefined") return {};
@@ -166,5 +176,77 @@ export function addStoredTip(username: string, tip: TipRecord): void {
     }
   } catch (e) {
     console.error("Failed to add tip to localStorage:", e);
+  }
+}
+
+export function getPendingVerifications(): PendingTipVerification[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(PENDING_VERIFY_KEY);
+    if (!raw) return [];
+    const parsed: PendingTipVerification[] = JSON.parse(raw);
+    const now = Date.now();
+    return parsed.filter(
+      (item) =>
+        item &&
+        typeof item.signature === "string" &&
+        typeof item.username === "string" &&
+        now - (item.createdAt || 0) < PENDING_VERIFY_TTL_MS
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function enqueuePendingVerification(
+  username: string,
+  signature: string
+): void {
+  if (typeof window === "undefined" || !username || !signature) return;
+  try {
+    const list = getPendingVerifications().filter(
+      (item) => item.signature !== signature
+    );
+    list.unshift({
+      signature,
+      username: username.toLowerCase(),
+      createdAt: Date.now(),
+      attempts: 0,
+    });
+    if (list.length > MAX_PENDING_VERIFY) list.length = MAX_PENDING_VERIFY;
+    localStorage.setItem(PENDING_VERIFY_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error("Failed to enqueue pending tip verification:", e);
+  }
+}
+
+export function removePendingVerification(signature: string): void {
+  if (typeof window === "undefined" || !signature) return;
+  try {
+    const list = getPendingVerifications().filter(
+      (item) => item.signature !== signature
+    );
+    localStorage.setItem(PENDING_VERIFY_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore storage error
+  }
+}
+
+export function bumpPendingVerificationAttempt(
+  signature: string,
+  maxAttempts = 10
+): void {
+  if (typeof window === "undefined" || !signature) return;
+  try {
+    const list = getPendingVerifications()
+      .map((item) =>
+        item.signature === signature
+          ? { ...item, attempts: (item.attempts || 0) + 1 }
+          : item
+      )
+      .filter((item) => item.attempts < maxAttempts);
+    localStorage.setItem(PENDING_VERIFY_KEY, JSON.stringify(list));
+  } catch {
+    // Ignore storage error
   }
 }

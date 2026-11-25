@@ -306,6 +306,18 @@ export async function hasTipSignatureInDb(
   return res.rows.length > 0;
 }
 
+export async function getExistingTipSignaturesInDb(
+  signatures: string[]
+): Promise<Set<string>> {
+  const pool = getPool();
+  if (!pool || signatures.length === 0) return new Set();
+  const res = await pool.query(
+    `SELECT signature FROM public.tips WHERE signature = ANY($1::text[])`,
+    [signatures]
+  );
+  return new Set(res.rows.map((r: any) => String(r.signature)));
+}
+
 export async function insertTipInDb(
   creatorId: string,
   username: string,

@@ -59,7 +59,7 @@ Files: `src/app/api/tips/verify/route.ts`, `src/lib/supabaseDb.ts`, `src/app/api
 - Keep list/SSE payloads free of audio bytes.
 Acceptance: new `audio_url` values are URLs or null; API/SSE no longer contain base64 audio; overlay still plays; typecheck passes.
 
-## [ ] Fix 7 — Missed-tip recovery
+## [x] Fix 7 — Missed-tip recovery
 Files: new API route, `src/lib/solanaServer.ts`, `src/lib/supabaseDb.ts`, `src/app/[username]/page.tsx`, `.env.example`, `README.md`.
 - Add one authenticated Helius webhook or protected cron route to ingest on-chain tips idempotently.
 - Verify the program instruction/event with the Fix 1 verifier.

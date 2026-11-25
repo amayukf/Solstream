@@ -626,10 +626,56 @@ export async function fetchVerifiedTransactionTip(
   return tip;
 }
 
+const DEFAULT_SIG_FETCH_CAP = (() => {
+  const raw = Number(process.env.SOLSTREAM_SIG_FETCH_CAP || "100");
+  if (!Number.isFinite(raw) || raw < 12) return 100;
+  return Math.min(Math.floor(raw), 500);
+})();
+
+export async function fetchSignaturesPaginated(
+  address: string,
+  maxSignatures: number = DEFAULT_SIG_FETCH_CAP,
+  untilSignature?: string
+): Promise<Array<{ signature: string; err: unknown; blockTime?: number | null }>> {
+  const cap = Math.max(1, Math.min(Math.floor(maxSignatures), 500));
+  const collected: Array<{ signature: string; err: unknown; blockTime?: number | null }> = [];
+  let before: string | undefined;
+
+  while (collected.length < cap) {
+    const pageLimit = Math.min(100, cap - collected.length);
+    const params: Record<string, unknown> = {
+      limit: pageLimit,
+      commitment: "confirmed",
+    };
+    if (before) params.before = before;
+    if (untilSignature) params.until = untilSignature;
+
+    const batch = await rpcCall("getSignaturesForAddress", [address, params]);
+    if (!Array.isArray(batch) || batch.length === 0) break;
+
+    for (const entry of batch) {
+      if (entry?.signature && entry.err === null) {
+        collected.push({
+          signature: entry.signature,
+          err: entry.err,
+          blockTime: entry.blockTime ?? null,
+        });
+      }
+    }
+
+    const lastSig = batch[batch.length - 1]?.signature;
+    if (!lastSig || batch.length < pageLimit) break;
+    before = lastSig;
+  }
+
+  return collected;
+}
+
 export async function fetchRecentTipsForCreator(
   username: string,
   pda: string,
-  forceFresh = false
+  forceFresh = false,
+  maxSignatures: number = DEFAULT_SIG_FETCH_CAP
 ): Promise<OnChainTip[]> {
   const key = username.toLowerCase();
   const memTips = verifiedTipsMemory.get(key) || [];
@@ -644,12 +690,8 @@ export async function fetchRecentTipsForCreator(
 
   const task = (async () => {
     try {
-      const sigs = await rpcCall("getSignaturesForAddress", [
-        pda,
-        { limit: 12, commitment: "confirmed" },
-      ]);
+      const validSigs = await fetchSignaturesPaginated(pda, maxSignatures);
 
-      const validSigs = (sigs || []).filter((s: any) => s.err === null);
       if (validSigs.length === 0) {
         tipsCache.set(key, { items: [], fetchedAt: Date.now() });
         return memTips;

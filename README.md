@@ -41,6 +41,7 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 | `/dashboard` | Creator Studio with OBS Browser Source URL, live SOL metrics, goal & voice controls, and realtime tip ledger. |
 | `/[username]` | Public fan tipping page with 6 micro-tiers, live SOL/USD converter, Amharic preset chips, and sorted Top Supporters leaderboard. |
 | `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with 7s auto-dismiss alert cards, synth chime + speech synthesis, FIFO queue, and goal bar. |
+| `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST` with `SOLSTREAM_RECOVERY_SECRET` or `CRON_SECRET`) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
 | `/api/prices` | Server-cached live Solana ecosystem price feed (CoinGecko primary with Binance fallback). |
 
 ---

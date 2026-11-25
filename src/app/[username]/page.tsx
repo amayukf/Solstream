@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { PublicKey } from "@solana/web3.js";
@@ -11,6 +11,10 @@ import {
   cacheCreatorProfile,
   getStoredTips,
   addStoredTip,
+  getPendingVerifications,
+  enqueuePendingVerification,
+  removePendingVerification,
+  bumpPendingVerificationAttempt,
   TipRecord,
   LeaderboardEntry,
 } from "@/lib/storage";
@@ -45,6 +49,7 @@ export default function FanTippingPage({
   const [tips, setTips] = useState<TipRecord[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
+  const flushingVerifyRef = useRef(false);
 
   // Success modal state with real verification status
   const [modalOpen, setModalOpen] = useState(false);
@@ -275,6 +280,92 @@ export default function FanTippingPage({
     loadBalance();
   }, [publicKey, connection]);
 
+  const submitVerifyRequest = useCallback(
+    async (sig: string, targetUsername: string): Promise<boolean> => {
+      try {
+        const res = await fetch("/api/tips/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ signature: sig, username: targetUsername }),
+        });
+
+        if (res.ok) {
+          const resData = await res.json().catch(() => null);
+          if (resData?.verified || resData?.alreadyProcessed) {
+            removePendingVerification(sig);
+            setSuccessTx((prev) =>
+              prev.signature === sig
+                ? {
+                    ...prev,
+                    serverVerified: true,
+                    ttsEngine: resData.ttsEngine || prev.ttsEngine,
+                  }
+                : prev
+            );
+            if (targetUsername === username) {
+              fetch(`/api/creators/${encodeURIComponent(username)}`, {
+                cache: "no-store",
+              })
+                .then((r) => (r.ok ? r.json() : null))
+                .then((freshData) => {
+                  if (Array.isArray(freshData?.leaderboard)) {
+                    setLeaderboard(freshData.leaderboard);
+                  }
+                })
+                .catch(() => {});
+            }
+            return true;
+          }
+        }
+
+        if (res.status === 404) {
+          removePendingVerification(sig);
+          return false;
+        }
+
+        bumpPendingVerificationAttempt(sig);
+        return false;
+      } catch {
+        bumpPendingVerificationAttempt(sig);
+        return false;
+      }
+    },
+    [username]
+  );
+
+  const flushPendingVerifications = useCallback(async () => {
+    if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+    if (flushingVerifyRef.current) return;
+    const pending = getPendingVerifications();
+    if (pending.length === 0) return;
+
+    flushingVerifyRef.current = true;
+    try {
+      for (const item of pending) {
+        await submitVerifyRequest(item.signature, item.username);
+      }
+    } finally {
+      flushingVerifyRef.current = false;
+    }
+  }, [submitVerifyRequest]);
+
+  useEffect(() => {
+    void flushPendingVerifications();
+    window.addEventListener("online", flushPendingVerifications);
+    window.addEventListener("focus", flushPendingVerifications);
+    const retryTimer = setInterval(() => {
+      if (getPendingVerifications().length > 0) {
+        void flushPendingVerifications();
+      }
+    }, 15_000);
+
+    return () => {
+      clearInterval(retryTimer);
+      window.removeEventListener("online", flushPendingVerifications);
+      window.removeEventListener("focus", flushPendingVerifications);
+    };
+  }, [flushPendingVerifications]);
+
   const shortWallet = publicKey
     ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
     : null;
@@ -338,33 +429,9 @@ export default function FanTippingPage({
       });
       setModalOpen(true);
 
-      // Call zero-trust verification + ElevenLabs TTS route
-      fetch("/api/tips/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signature: tx, username }),
-      })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((resData) => {
-          if (resData?.verified) {
-            setSuccessTx((prev) => ({
-              ...prev,
-              serverVerified: true,
-              ttsEngine: resData.ttsEngine || null,
-            }));
-            fetch(`/api/creators/${encodeURIComponent(username)}`, {
-              cache: "no-store",
-            })
-              .then((r) => (r.ok ? r.json() : null))
-              .then((freshData) => {
-                if (Array.isArray(freshData?.leaderboard)) {
-                  setLeaderboard(freshData.leaderboard);
-                }
-              })
-              .catch(() => {});
-          }
-        })
-        .catch(() => {});
+      // Persist pending verification in localStorage before calling server so offline/failed requests auto-retry
+      enqueuePendingVerification(username, tx);
+      void submitVerifyRequest(tx, username);
     } catch (err: any) {
       console.error("Tip failed:", err);
       setError(err?.message || "Transaction failed on Solana Devnet.");
