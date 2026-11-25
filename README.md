@@ -48,6 +48,7 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 ## 🛠️ Tech Stack
 
 - **Blockchain:** Solana Devnet, Anchor `0.30.1` (Rust)
+- **Database & Audio Storage:** Supabase PostgreSQL, Realtime, and Storage (`stream-alerts/<username>/<signature>.mp3`)
 - **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS
 - **Typography:** `Space Grotesk`, `Plus Jakarta Sans`, `JetBrains Mono`
 - **Wallets:** `@solana/wallet-adapter-react` (Solana Wallet Standard: Phantom, Solflare, Backpack)
@@ -62,9 +63,13 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
    npm install
    ```
 
-2. Run development server:
+2. Configure environment variables (copy `.env.example` to `.env.local`):
+   - Set `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for Supabase persistence and Realtime alerts.
+   - Set `ELEVENLABS_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` to upload ElevenLabs TTS MP3 files to the public `stream-alerts` Supabase Storage bucket (`stream-alerts/<username>/<signature>.mp3`) and store only the public URL in `tips.audio_url`. When storage is not configured, `tips.audio_url` is stored as `null` and the OBS overlay falls back to browser speech synthesis.
+
+3. Run development server:
    ```bash
    npm run dev
    ```
 
-3. Open [http://localhost:3000](http://localhost:3000) and connect your Phantom wallet switched to **Solana Devnet**.
+4. Open [http://localhost:3000](http://localhost:3000) and connect your Phantom wallet switched to **Solana Devnet**.

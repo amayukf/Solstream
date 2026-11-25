@@ -12,6 +12,7 @@ import {
   upsertCreatorInDb,
   insertTipInDb,
   hasTipSignatureInDb,
+  uploadAlertAudioToStorage,
 } from "@/lib/supabaseDb";
 
 const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Adam
@@ -22,10 +23,10 @@ function sanitizeForTts(text: string): string {
   return text.replace(blocked, "***").trim();
 }
 
-async function generateElevenLabsDataUrl(
+async function generateElevenLabsAudioBuffer(
   voiceId: string,
   text: string
-): Promise<string | null> {
+): Promise<Buffer | null> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) return null;
 
@@ -60,8 +61,7 @@ async function generateElevenLabsDataUrl(
       return null;
     }
 
-    const buf = Buffer.from(await res.arrayBuffer());
-    return `data:audio/mpeg;base64,${buf.toString("base64")}`;
+    return Buffer.from(await res.arrayBuffer());
   } catch (err) {
     console.warn("ElevenLabs TTS error:", err);
     return null;
@@ -136,33 +136,30 @@ export async function POST(req: Request) {
     }
 
     const processTask = (async () => {
-      // 4. Generate TTS only after verification + creator match + idempotency check
+      // 4. Generate TTS & upload to Supabase Storage only after verification + creator match + idempotency
       const solAmount = (tip.amountLamports / 1_000_000_000).toFixed(3);
       const cleanMsg = sanitizeForTts(tip.message || "");
       const speechScript = `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`;
 
       const voiceId = resolvedCreator.voiceId || DEFAULT_VOICE_ID;
-      const ttsEngine = process.env.ELEVENLABS_API_KEY
-        ? "elevenlabs"
-        : "browser-speech";
-      const audioDataUrl = await generateElevenLabsDataUrl(
+      const audioBuffer = await generateElevenLabsAudioBuffer(
         voiceId,
         speechScript
       );
+      const audioUrl = audioBuffer
+        ? await uploadAlertAudioToStorage(username, signature, audioBuffer)
+        : null;
+
+      const ttsEngine = audioUrl ? "elevenlabs" : "browser-speech";
 
       const verifiedTip = {
         ...tip,
-        audioDataUrl,
+        audioUrl,
       };
 
-      // 5. Persist into DB; push to SSE only if DB insert actually succeeded
+      // 5. Persist into DB (URL or null only); push to SSE only if DB insert succeeded
       const dbResult = dbCreator?.id
-        ? await insertTipInDb(
-            dbCreator.id,
-            username,
-            verifiedTip,
-            audioDataUrl ? "elevenlabs" : "browser-speech"
-          )
+        ? await insertTipInDb(dbCreator.id, username, verifiedTip, ttsEngine)
         : { inserted: false, row: null };
 
       const savedToSupabase = dbResult.inserted;
@@ -173,7 +170,7 @@ export async function POST(req: Request) {
         return {
           verified: true,
           savedToSupabase,
-          ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
+          ttsEngine,
           tip: verifiedTip,
         };
       }
@@ -190,7 +187,7 @@ export async function POST(req: Request) {
       return {
         verified: true,
         savedToSupabase,
-        ttsEngine: audioDataUrl ? "elevenlabs" : ttsEngine,
+        ttsEngine,
         tip: verifiedTip,
       };
     })();

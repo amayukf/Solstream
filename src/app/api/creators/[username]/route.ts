@@ -13,6 +13,7 @@ import {
   syncCreatorExactStatsInDb,
   insertTipInDb,
   isPostgresUniqueViolation,
+  normalizeAudioUrl,
   type DbCreatorRow,
   type DbLeaderboardEntry,
 } from "@/lib/supabaseDb";
@@ -23,12 +24,15 @@ function mergeTipArrays(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
     if (!item?.signature) continue;
     const prev = map.get(item.signature);
     if (!prev) {
-      map.set(item.signature, item);
+      map.set(item.signature, {
+        ...item,
+        audioUrl: normalizeAudioUrl(item.audioUrl),
+      });
     } else {
       map.set(item.signature, {
         ...prev,
         ...item,
-        audioDataUrl: prev.audioDataUrl || item.audioDataUrl || null,
+        audioUrl: normalizeAudioUrl(prev.audioUrl || item.audioUrl),
       });
     }
   }

@@ -4,9 +4,27 @@ import {
   fetchRecentTipsForCreator,
   OnChainTip,
 } from "@/lib/solanaServer";
-import { getCreatorFromDb, getTipsFromDb } from "@/lib/supabaseDb";
+import {
+  getCreatorFromDb,
+  getTipsFromDb,
+  normalizeAudioUrl,
+} from "@/lib/supabaseDb";
 
 export const dynamic = "force-dynamic";
+
+function sanitizeTipForSse(tip: OnChainTip, includeAudioUrl: boolean): OnChainTip {
+  return {
+    signature: tip.signature,
+    creator: tip.creator,
+    donor: tip.donor,
+    amountLamports: tip.amountLamports,
+    tier: tip.tier,
+    displayName: tip.displayName,
+    message: tip.message,
+    timestamp: tip.timestamp,
+    audioUrl: includeAudioUrl ? normalizeAudioUrl(tip.audioUrl) : null,
+  };
+}
 
 export async function GET(
   req: Request,
@@ -29,9 +47,9 @@ export async function GET(
         }
       };
 
-      // Subscribe to real-time verified tips immediately
+      // Subscribe to real-time verified tips immediately (URL only, never audio bytes)
       const unsubscribe = subscribeToOverlayAlerts(username, (tip: OnChainTip) => {
-        send("tip", tip);
+        send("tip", sanitizeTipForSse(tip, true));
       });
 
       const keepAlive = setInterval(() => {
@@ -49,7 +67,7 @@ export async function GET(
 
       req.signal.addEventListener("abort", cleanup);
 
-      // Push initial creator & recent tips snapshot immediately (Supabase first, Devnet fallback)
+      // Push initial creator & recent tips snapshot immediately (keep init payload free of audio bytes)
       try {
         const dbCreator = await getCreatorFromDb(username);
         const creator =
@@ -58,7 +76,10 @@ export async function GET(
         if (tips.length === 0 && creator) {
           tips = await fetchRecentTipsForCreator(username, creator.pda);
         }
-        send("init", { creator, tips });
+        send("init", {
+          creator,
+          tips: tips.map((t) => sanitizeTipForSse(t, true)),
+        });
       } catch {
         send("init", { creator: null, tips: [] });
       }

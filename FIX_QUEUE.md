@@ -51,7 +51,7 @@ Files: `src/lib/storage.ts`, `src/app/[username]/page.tsx`, `src/app/dashboard/p
 - Cap localStorage: 100 tips/creator, 50 profiles.
 Acceptance: viewing a creator doesn’t change fan’s active handle; dashboard totals match chain; leaderboard is all-time; typecheck passes.
 
-## [ ] Fix 6 — Audio storage
+## [x] Fix 6 — Audio storage
 Files: `src/app/api/tips/verify/route.ts`, `src/lib/supabaseDb.ts`, `src/app/api/creators/[username]/route.ts`, `src/app/api/overlay/[username]/stream/route.ts`, `src/app/overlay/[username]/page.tsx`, `.env.example`, `README.md`.
 - Upload ElevenLabs MP3 to Supabase Storage `stream-alerts/<username>/<signature>.mp3`.
 - Store only the URL in `tips.audio_url`; never store base64 data URLs.

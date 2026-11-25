@@ -15,7 +15,16 @@ interface AlertItem {
   tierName: string;
   message: string;
   timestamp: number;
-  audioDataUrl?: string | null;
+  audioUrl?: string | null;
+}
+
+function toPlayableAudioUrl(raw?: string | null): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+    return trimmed;
+  }
+  return null;
 }
 
 const TIER_STYLES = [
@@ -235,24 +244,24 @@ export default function ObsOverlayPage({
       tierName: style.name,
       message: t.message || "",
       timestamp: Number(t.timestamp) || Date.now(),
-      audioDataUrl: t.audioDataUrl || null,
+      audioUrl: toPlayableAudioUrl(t.audioUrl ?? t.audio_url),
     };
   }, []);
 
   const enqueueIncomingTip = useCallback(
     (rawTip: any) => {
       const item = toAlertItem(rawTip);
-      if (item.audioDataUrl) {
-        setInCappedMap(audioBySig.current, item.signature, item.audioDataUrl);
+      if (item.audioUrl) {
+        setInCappedMap(audioBySig.current, item.signature, item.audioUrl);
       }
 
       setLatestTip(item);
 
       if (seenSigs.current.has(item.signature)) {
-        // If alert is currently visible and ElevenLabs audio just arrived over SSE, update it!
+        // If alert is currently visible and ElevenLabs audio URL just arrived over SSE/Realtime, update it!
         setCurrentAlert((curr) =>
-          curr && curr.signature === item.signature && item.audioDataUrl
-            ? { ...curr, audioDataUrl: item.audioDataUrl }
+          curr && curr.signature === item.signature && item.audioUrl
+            ? { ...curr, audioUrl: item.audioUrl }
             : curr
         );
         return;
@@ -374,7 +383,7 @@ export default function ObsOverlayPage({
             tier: Number(row.tier) || 0,
             message: row.message || "",
             timestamp: new Date(row.created_at).getTime(),
-            audioDataUrl: row.audio_url || null,
+            audioUrl: toPlayableAudioUrl(row.audio_url),
           });
         }
       )
@@ -499,7 +508,7 @@ export default function ObsOverlayPage({
       addToCappedSet(playedAudioSigs.current, latestAlert.signature);
 
       const cachedAudio =
-        latestAlert.audioDataUrl ||
+        latestAlert.audioUrl ||
         audioBySig.current.get(latestAlert.signature) ||
         null;
 
@@ -519,29 +528,29 @@ export default function ObsOverlayPage({
     };
   }, [currentAlert?.id, playTipAudio]);
 
-  // 3d. If ElevenLabs audio arrives while alert is active and hasn't played yet
+  // 3d. If ElevenLabs audio URL arrives while alert is active and hasn't played yet
   useEffect(() => {
     if (
-      currentAlert?.audioDataUrl &&
+      currentAlert?.audioUrl &&
       !playedAudioSigs.current.has(currentAlert.signature)
     ) {
       addToCappedSet(playedAudioSigs.current, currentAlert.signature);
-      playTipAudio(currentAlert.audioDataUrl, currentAlert, false);
+      playTipAudio(currentAlert.audioUrl, currentAlert, false);
     }
-  }, [currentAlert?.id, currentAlert?.audioDataUrl, currentAlert, playTipAudio]);
+  }, [currentAlert?.id, currentAlert?.audioUrl, currentAlert, playTipAudio]);
 
   const replayLatestRealTip = () => {
     if (!latestTip) return;
     const replayId = `${latestTip.signature}-replay-${Date.now()}`;
     const cachedAudio =
-      latestTip.audioDataUrl || audioBySig.current.get(latestTip.signature) || null;
+      latestTip.audioUrl || audioBySig.current.get(latestTip.signature) || null;
     if (cachedAudio) {
       setInCappedMap(audioBySig.current, replayId, cachedAudio);
     }
     playedAudioSigs.current.delete(replayId);
     setQueue((prev) => [
       ...prev,
-      { ...latestTip, id: replayId, signature: replayId, audioDataUrl: cachedAudio },
+      { ...latestTip, id: replayId, signature: replayId, audioUrl: cachedAudio },
     ]);
   };
 
@@ -657,7 +666,7 @@ export default function ObsOverlayPage({
                       <span className="w-1.5 h-2 bg-[#00F0FF] rounded-full animate-pulse delay-200" />
                     </div>
                     <span className="text-[9px] font-mono uppercase tracking-wider text-zinc-400">
-                      {currentAlert.audioDataUrl ? "ElevenLabs AI" : "AI Voice"}
+                      {currentAlert.audioUrl ? "ElevenLabs AI" : "AI Voice"}
                     </span>
                   </div>
                 </div>

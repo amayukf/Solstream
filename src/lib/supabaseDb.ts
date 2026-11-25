@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { createClient } from "@supabase/supabase-js";
 import type { OnChainCreator, OnChainTip } from "@/lib/solanaServer";
 
 const globalForPg = globalThis as unknown as {
@@ -32,6 +33,64 @@ export interface DbLeaderboardEntry {
   count: number;
   latestSig: string;
   latestTimestamp: number;
+}
+
+export function normalizeAudioUrl(url?: string | null): string | null {
+  if (!url || typeof url !== "string") return null;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return null;
+  if (trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+    return trimmed;
+  }
+  return null;
+}
+
+export async function uploadAlertAudioToStorage(
+  username: string,
+  signature: string,
+  audioBuffer: Buffer
+): Promise<string | null> {
+  const supabaseUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    console.warn(
+      "Supabase Storage upload skipped: missing NEXT_PUBLIC_SUPABASE_URL/SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY. Storing null audio_url."
+    );
+    return null;
+  }
+
+  try {
+    const admin = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const safeUser = username.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    const safeSig = signature.trim().replace(/[^a-zA-Z0-9_-]/g, "");
+    const objectPath = `${safeUser}/${safeSig}.mp3`;
+
+    const { error } = await admin.storage
+      .from("stream-alerts")
+      .upload(objectPath, audioBuffer, {
+        contentType: "audio/mpeg",
+        upsert: true,
+      });
+
+    if (error) {
+      console.warn("Supabase Storage upload failed:", error.message);
+      return null;
+    }
+
+    const { data } = admin.storage
+      .from("stream-alerts")
+      .getPublicUrl(objectPath);
+
+    return normalizeAudioUrl(data?.publicUrl);
+  } catch (err) {
+    console.warn("Supabase Storage upload error:", err);
+    return null;
+  }
 }
 
 export function isPostgresUniqueViolation(err: unknown): boolean {
@@ -69,7 +128,7 @@ function mapTipRow(r: any): OnChainTip {
     displayName: r.display_name || "Anonymous",
     message: r.message || "",
     timestamp: new Date(r.created_at).getTime(),
-    audioDataUrl: r.audio_url || null,
+    audioUrl: normalizeAudioUrl(r.audio_url),
   };
 }
 
@@ -276,7 +335,7 @@ export async function insertTipInDb(
       tip.amountLamports,
       tip.tier,
       tip.message || "",
-      tip.audioDataUrl || null,
+      normalizeAudioUrl(tip.audioUrl),
       ttsEngine,
       createdAt,
     ]

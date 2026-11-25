@@ -24,7 +24,7 @@ export interface OnChainTip {
   displayName: string;
   message: string;
   timestamp: number;
-  audioDataUrl?: string | null;
+  audioUrl?: string | null;
 }
 
 const CREATOR_DISC = [222, 163, 32, 169, 204, 8, 200, 32];
