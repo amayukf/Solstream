@@ -14,6 +14,7 @@ import {
   TipRecord,
 } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Copy,
   Check,
@@ -22,6 +23,8 @@ import {
   AlertCircle,
   Inbox,
   Sparkles,
+  QrCode,
+  X,
 } from "lucide-react";
 
 const WalletMultiButton = dynamic(
@@ -50,6 +53,7 @@ export default function CreatorDashboardPage() {
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [isCopied, setIsCopied] = useState(false);
   const [isBioCopied, setIsBioCopied] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
   const [isUpdatingGoal, setIsUpdatingGoal] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -487,6 +491,14 @@ export default function CreatorDashboardPage() {
                       </>
                     )}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowQrModal(true)}
+                    className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-300 hover:text-[#14F195] transition-colors flex-shrink-0 border border-white/10"
+                    title="Show scannable tip QR code"
+                  >
+                    <QrCode className="w-4 h-4" />
+                  </button>
                   <Link
                     href={`/${username}`}
                     target="_blank"
@@ -527,10 +539,10 @@ export default function CreatorDashboardPage() {
                     )}
                   </button>
                   <Link
-                    href={`/overlay/${username}`}
+                    href={`/overlay/${username}?preview=1`}
                     target="_blank"
                     className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-400 hover:text-white transition-colors flex-shrink-0"
-                    title="Preview overlay"
+                    title="Preview overlay with test button"
                   >
                     <ExternalLink className="w-4 h-4" />
                   </Link>
@@ -744,6 +756,53 @@ export default function CreatorDashboardPage() {
           </>
         )}
       </main>
+
+      {/* Scannable Stream Tip QR Code Modal */}
+      {showQrModal && username && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-3xl bg-[#13141F] border border-white/10 p-7 text-center space-y-5 shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-400 hover:text-white transition-colors"
+              aria-label="Close QR modal"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div>
+              <div className="text-xs font-black uppercase tracking-wider text-[#14F195] mb-1">
+                Scan to Tip @{username}
+              </div>
+              <p className="text-xs text-zinc-400">
+                Put this QR on your stream corner or share with mobile viewers.
+              </p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl inline-block mx-auto shadow-lg">
+              <QRCodeSVG
+                value={tipPageUrl}
+                size={196}
+                bgColor="#FFFFFF"
+                fgColor="#0B0C10"
+                level="M"
+              />
+            </div>
+
+            <div className="text-[11px] font-mono text-zinc-300 bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2 truncate">
+              {tipPageUrl}
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCopyTipLink}
+              className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs transition-colors"
+            >
+              {isBioCopied ? "Copied Link!" : "Copy Tip Link"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

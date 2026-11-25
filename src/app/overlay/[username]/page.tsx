@@ -11,6 +11,7 @@ interface AlertItem {
   tier: number;
   tierName: string;
   message: string;
+  audioDataUrl?: string | null;
 }
 
 const TIER_NAMES = ["Coffee", "Rose", "Fire", "Diamond", "Rocket", "Crown"];
@@ -24,7 +25,6 @@ function playAlertChime() {
     const ctx = new AudioCtx();
     const now = ctx.currentTime;
 
-    // Pleasant two-tone futuristic synth chime (E5 -> B5)
     const notes = [659.25, 987.77];
     notes.forEach((freq, i) => {
       const osc = ctx.createOscillator();
@@ -40,7 +40,22 @@ function playAlertChime() {
       osc.stop(now + i * 0.12 + 0.48);
     });
   } catch {
-    // Ignore autoplay blocks gracefully
+    // Ignore autoplay restrictions gracefully
+  }
+}
+
+function speakFallback(displayName: string, amountSol: number, message: string) {
+  if (typeof window !== "undefined" && window.speechSynthesis) {
+    try {
+      window.speechSynthesis.cancel();
+      const text = `${displayName} tipped ${amountSol} SOL. ${message}`;
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 1.0;
+      utter.pitch = 1.0;
+      window.speechSynthesis.speak(utter);
+    } catch {
+      // Ignore speech errors
+    }
   }
 }
 
@@ -53,19 +68,25 @@ export default function ObsOverlayPage({
 
   const [queue, setQueue] = useState<AlertItem[]>([]);
   const [currentAlert, setCurrentAlert] = useState<AlertItem | null>(null);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
 
-  // Track already seen/played tip signatures
   const seenSigs = useRef<Set<string>>(new Set());
   const isFirstLocalLoad = useRef(true);
   const isFirstRemoteLoad = useRef(true);
   const isFetchingRemote = useRef(false);
 
-  // Goal state
   const [goal, setGoal] = useState({
     title: "Stream Goal",
     currentSol: 0,
     targetSol: 1.0,
   });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      setIsPreviewMode(search.get("preview") === "1");
+    }
+  }, []);
 
   const refreshGoal = useCallback(() => {
     const creator = getStoredCreator(username);
@@ -83,12 +104,10 @@ export default function ObsOverlayPage({
     }
   }, [username]);
 
-  // Load creator goal initially from localStorage
   useEffect(() => {
     refreshGoal();
   }, [refreshGoal]);
 
-  // Fast localStorage tip check (for same-browser testing)
   const checkLocalTips = useCallback(() => {
     const storedTips = getStoredTips(username);
 
@@ -117,7 +136,6 @@ export default function ObsOverlayPage({
     }
   }, [username, refreshGoal]);
 
-  // Cross-device Solana Devnet polling (so OBS Studio & remote browsers sync cleanly)
   const checkRemoteTips = useCallback(async () => {
     if (isFetchingRemote.current) return;
     isFetchingRemote.current = true;
@@ -155,6 +173,7 @@ export default function ObsOverlayPage({
           tier: typeof t.tier === "number" ? t.tier : 3,
           tierName: TIER_NAMES[t.tier] || "Tip",
           message: t.message || "",
+          audioDataUrl: t.audioDataUrl || null,
         }));
         setQueue((prev) => [...prev, ...newAlerts]);
       }
@@ -191,30 +210,34 @@ export default function ObsOverlayPage({
     };
   }, [checkLocalTips, checkRemoteTips, refreshGoal, username]);
 
-  // FIFO Alert Queue Processor
+  // FIFO Alert Queue Processor (ElevenLabs MP3 or Web Speech fallback)
   useEffect(() => {
     if (!currentAlert && queue.length > 0) {
       const nextAlert = queue[0];
       setQueue((prev) => prev.slice(1));
       setCurrentAlert(nextAlert);
 
-      // Play chime + TTS speech
       playAlertChime();
 
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        try {
-          window.speechSynthesis.cancel();
-          const text = `${nextAlert.displayName} tipped ${nextAlert.amountSol} SOL. ${nextAlert.message}`;
-          const utter = new SpeechSynthesisUtterance(text);
-          utter.rate = 1.0;
-          utter.pitch = 1.0;
-          window.speechSynthesis.speak(utter);
-        } catch {
-          // Graceful fallback if speech synthesis is unavailable
+      setTimeout(() => {
+        if (nextAlert.audioDataUrl) {
+          const audio = new Audio(nextAlert.audioDataUrl);
+          audio.play().catch(() => {
+            speakFallback(
+              nextAlert.displayName,
+              nextAlert.amountSol,
+              nextAlert.message
+            );
+          });
+        } else {
+          speakFallback(
+            nextAlert.displayName,
+            nextAlert.amountSol,
+            nextAlert.message
+          );
         }
-      }
+      }, 350);
 
-      // Auto-dismiss alert after 7 seconds
       const dismissTimer = setTimeout(() => {
         setCurrentAlert(null);
       }, 7000);
@@ -242,11 +265,18 @@ export default function ObsOverlayPage({
   );
 
   return (
-    <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-8">
-      {/* Top Helper Pills (Subtle opacity for clean OBS capture, bright on hover) */}
-      <div className="flex items-center justify-between text-xs opacity-35 hover:opacity-100 transition-opacity">
+    <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-8 group">
+      {/* Top Helper Pills: invisible in live OBS unless ?preview=1 or mouse hovered */}
+      <div
+        className={`flex items-center justify-between text-xs transition-opacity duration-300 ${
+          isPreviewMode
+            ? "opacity-90 hover:opacity-100"
+            : "opacity-0 group-hover:opacity-100"
+        }`}
+      >
         <div className="px-3.5 py-1.5 rounded-full bg-black/70 border border-white/10 text-zinc-400 font-medium">
-          OBS Browser Source: <span className="font-mono text-white">@{username}</span> (Transparent Canvas)
+          OBS Browser Source:{" "}
+          <span className="font-mono text-white">@{username}</span> (Clean Canvas)
         </div>
 
         <div className="flex items-center gap-2">
@@ -267,7 +297,6 @@ export default function ObsOverlayPage({
       <div className="flex-1 flex items-center justify-center">
         {currentAlert && (
           <div className="relative animate-bounce-short w-full max-w-xl">
-            {/* Ambient neon backdrop glow */}
             <div className="absolute inset-0 bg-gradient-to-r from-[#9945FF]/40 to-[#14F195]/40 blur-2xl rounded-3xl" />
 
             <div className="relative rounded-3xl bg-[#13141F]/95 border-2 border-[#14F195]/70 p-6 md:p-8 w-full shadow-2xl backdrop-blur-xl">
@@ -289,13 +318,11 @@ export default function ObsOverlayPage({
                 </div>
               </div>
 
-              {/* Message Box & Animated Equalizer */}
               <div className="flex items-center gap-4 bg-[#090A0F]/80 border border-white/10 rounded-2xl p-4">
                 <p className="flex-1 text-sm text-zinc-100 font-medium">
                   {currentAlert.message}
                 </p>
 
-                {/* Animated Equalizer Waveform */}
                 <div className="flex items-end gap-1 h-6 flex-shrink-0">
                   <span className="w-1.5 h-3 bg-[#E031E0] rounded-full animate-pulse" />
                   <span className="w-1.5 h-5 bg-[#00F0FF] rounded-full animate-pulse delay-75" />
@@ -327,10 +354,12 @@ export default function ObsOverlayPage({
           </div>
         </div>
 
-        {/* Streamer Camera Box */}
-        <div className="w-48 h-32 rounded-2xl bg-[#13141F]/50 border border-white/5 flex items-center justify-center text-xs text-zinc-600">
-          Streamer camera
-        </div>
+        {/* Streamer camera box: visible only in ?preview=1 mode so OBS remains clean */}
+        {isPreviewMode && (
+          <div className="w-48 h-32 rounded-2xl bg-[#13141F]/50 border border-white/5 flex items-center justify-center text-xs text-zinc-600">
+            Streamer camera area
+          </div>
+        )}
       </div>
     </div>
   );

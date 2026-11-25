@@ -2,7 +2,7 @@
 
 import React, { useEffect } from "react";
 import confetti from "canvas-confetti";
-import { Check, ExternalLink } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 
 interface TipSuccessModalProps {
   isOpen: boolean;
@@ -12,6 +12,8 @@ interface TipSuccessModalProps {
   displayName: string;
   message: string;
   username?: string;
+  serverVerified?: boolean;
+  ttsEngine?: string | null;
 }
 
 export default function TipSuccessModal({
@@ -20,6 +22,8 @@ export default function TipSuccessModal({
   signature,
   amountSol,
   username = "creator",
+  serverVerified = true,
+  ttsEngine,
 }: TipSuccessModalProps) {
   useEffect(() => {
     if (isOpen) {
@@ -67,11 +71,19 @@ export default function TipSuccessModal({
 
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-full bg-[#14F195] text-[#090A0F] flex items-center justify-center">
-                <Check className="w-3.5 h-3.5 stroke-[3]" />
-              </div>
+              {serverVerified ? (
+                <div className="w-5 h-5 rounded-full bg-[#14F195] text-[#090A0F] flex items-center justify-center">
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                </div>
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                </div>
+              )}
               <span className="font-bold text-white">
-                Checked against the chain
+                {serverVerified
+                  ? "Checked against the chain"
+                  : "Verifying TipEvent on Devnet..."}
               </span>
             </div>
             <span className="text-[11px] font-mono text-zinc-500">server</span>
@@ -84,6 +96,7 @@ export default function TipSuccessModal({
               </div>
               <span className="font-bold text-white">
                 Alert queued on the stream
+                {ttsEngine === "elevenlabs" ? " (ElevenLabs TTS)" : ""}
               </span>
             </div>
             <span className="text-[11px] font-mono text-zinc-500">realtime</span>

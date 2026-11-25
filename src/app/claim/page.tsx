@@ -36,6 +36,33 @@ function ClaimHandleForm() {
   const [error, setError] = useState<string | null>(null);
 
   const [existingOnChainHandle, setExistingOnChainHandle] = useState<string | null>(null);
+  const [registeredHandles, setRegisteredHandles] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    fetch("/api/creators")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.creators)) {
+          const map: Record<string, string> = {};
+          for (const c of data.creators) {
+            if (c.username && c.authority) {
+              map[c.username.toLowerCase()] = c.authority;
+            }
+          }
+          setRegisteredHandles(map);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const cleanHandle = handle.trim().toLowerCase();
+  const handleOwner = cleanHandle ? registeredHandles[cleanHandle] : undefined;
+  const isHandleTakenByOther = Boolean(
+    handleOwner && (!publicKey || handleOwner !== publicKey.toBase58())
+  );
+  const isHandleOwnedBySelf = Boolean(
+    handleOwner && publicKey && handleOwner === publicKey.toBase58()
+  );
 
   useEffect(() => {
     const queryHandle = searchParams?.get("handle");
@@ -99,6 +126,10 @@ function ClaimHandleForm() {
     }
     if (!handle.trim()) {
       setError("Please enter a valid handle.");
+      return;
+    }
+    if (isHandleTakenByOther) {
+      setError(`@${cleanHandle} is already claimed on Devnet by another wallet. Choose a different handle.`);
       return;
     }
     setError(null);
@@ -243,9 +274,23 @@ function ClaimHandleForm() {
                 className="flex-1 bg-transparent text-white font-semibold text-sm focus:outline-none"
                 required
               />
-              <span className="text-xs font-semibold text-[#14F195] bg-[#14F195]/10 px-2.5 py-0.5 rounded-full border border-[#14F195]/20">
-                Available
-              </span>
+              {cleanHandle && (
+                <span
+                  className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
+                    isHandleTakenByOther
+                      ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
+                      : isHandleOwnedBySelf
+                      ? "text-[#14F195] bg-[#14F195]/10 border-[#14F195]/20"
+                      : "text-[#14F195] bg-[#14F195]/10 border-[#14F195]/20"
+                  }`}
+                >
+                  {isHandleTakenByOther
+                    ? "Taken"
+                    : isHandleOwnedBySelf
+                    ? "Owned by you"
+                    : "Available"}
+                </span>
+              )}
             </div>
             <span className="block text-[11px] text-zinc-500 mt-1.5">
               Lowercase letters, numbers and underscore · 1 to 32 characters
@@ -332,7 +377,7 @@ function ClaimHandleForm() {
             ) : (
               <button
                 type="submit"
-                disabled={isLoading}
+                disabled={isLoading || isHandleTakenByOther}
                 className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center justify-center gap-2 flex-shrink-0 disabled:opacity-50"
               >
                 {isLoading ? (

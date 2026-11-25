@@ -23,6 +23,7 @@ export interface OnChainTip {
   displayName: string;
   message: string;
   timestamp: number;
+  audioDataUrl?: string | null;
 }
 
 const CREATOR_DISC = [222, 163, 32, 169, 204, 8, 200, 32];
@@ -126,7 +127,8 @@ export function decodeTipEventFromLogs(
       offset += mLen;
 
       const rawTs = Number(buf.readBigInt64LE(offset));
-      const tsSeconds = rawTs || fallbackBlockTime || Math.floor(Date.now() / 1000);
+      const tsSeconds =
+        rawTs || fallbackBlockTime || Math.floor(Date.now() / 1000);
 
       return {
         signature,
@@ -145,51 +147,68 @@ export function decodeTipEventFromLogs(
   return null;
 }
 
-async function rpcCall(method: string, params: any[]) {
-  const res = await fetch(DEVNET_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(8000),
-  });
-  if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
-  const data = await res.json();
-  if (data.error) throw new Error(data.error.message || "RPC error");
-  return data.result;
-}
-
-async function rpcBatch(calls: { method: string; params: any[] }[]) {
-  const res = await fetch(DEVNET_RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(
-      calls.map((c, idx) => ({
+async function rpcCall(
+  method: string,
+  params: any[],
+  retries = 2
+): Promise<any> {
+  try {
+    const res = await fetch(DEVNET_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
         jsonrpc: "2.0",
-        id: idx + 1,
-        method: c.method,
-        params: c.params,
-      }))
-    ),
-    cache: "no-store",
-    signal: AbortSignal.timeout(10000),
-  });
-  if (!res.ok) throw new Error(`RPC Batch HTTP ${res.status}`);
-  return await res.json();
+        id: 1,
+        method,
+        params,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(12000),
+    });
+    if (!res.ok) throw new Error(`RPC HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message || "RPC error");
+    return data.result;
+  } catch (err) {
+    if (retries > 0) {
+      await new Promise((r) => setTimeout(r, 1200));
+      return rpcCall(method, params, retries - 1);
+    }
+    throw err;
+  }
 }
 
-// Short server-side caches for speed + multi-device real-time sync
-let creatorsCache: { items: OnChainCreator[]; fetchedAt: number } | null = null;
-const tipsCache = new Map<string, { items: OnChainTip[]; fetchedAt: number }>();
-const verifiedTipsMemory = new Map<string, OnChainTip[]>();
+interface GlobalSolStreamStore {
+  txBySigCache: Map<string, OnChainTip | null>;
+  creatorsCache: { items: OnChainCreator[]; fetchedAt: number } | null;
+  inflightCreators: Promise<OnChainCreator[]> | null;
+  tipsCache: Map<string, { items: OnChainTip[]; fetchedAt: number }>;
+  inflightTips: Map<string, Promise<OnChainTip[]>>;
+  verifiedTipsMemory: Map<string, OnChainTip[]>;
+}
+
+const globalForSolStream = globalThis as unknown as {
+  __solstreamStore?: GlobalSolStreamStore;
+};
+
+const store: GlobalSolStreamStore =
+  globalForSolStream.__solstreamStore ??
+  (globalForSolStream.__solstreamStore = {
+    txBySigCache: new Map(),
+    creatorsCache: null,
+    inflightCreators: null,
+    tipsCache: new Map(),
+    inflightTips: new Map(),
+    verifiedTipsMemory: new Map(),
+  });
+
+const txBySigCache = store.txBySigCache;
+const tipsCache = store.tipsCache;
+const inflightTips = store.inflightTips;
+const verifiedTipsMemory = store.verifiedTipsMemory;
 
 export function invalidateCreatorCache(username?: string) {
-  creatorsCache = null;
+  store.creatorsCache = null;
   if (username) {
     tipsCache.delete(username.toLowerCase());
   }
@@ -197,10 +216,11 @@ export function invalidateCreatorCache(username?: string) {
 
 export function pushVerifiedTipToMemory(username: string, tip: OnChainTip) {
   const key = username.toLowerCase();
+  txBySigCache.set(tip.signature, tip);
+
   const existing = verifiedTipsMemory.get(key) || [];
-  if (!existing.some((t) => t.signature === tip.signature)) {
-    verifiedTipsMemory.set(key, [tip, ...existing]);
-  }
+  const filtered = existing.filter((t) => t.signature !== tip.signature);
+  verifiedTipsMemory.set(key, [tip, ...filtered]);
   invalidateCreatorCache(key);
 }
 
@@ -209,33 +229,41 @@ export async function fetchAllOnChainCreators(
 ): Promise<OnChainCreator[]> {
   if (
     !forceFresh &&
-    creatorsCache &&
-    Date.now() - creatorsCache.fetchedAt < 10_000
+    store.creatorsCache &&
+    Date.now() - store.creatorsCache.fetchedAt < 15_000
   ) {
-    return creatorsCache.items;
+    return store.creatorsCache.items;
   }
 
-  try {
-    const accounts = await rpcCall("getProgramAccounts", [
-      PROGRAM_ID.toBase58(),
-      { encoding: "base64", commitment: "confirmed" },
-    ]);
+  if (store.inflightCreators) return store.inflightCreators;
 
-    const decoded: OnChainCreator[] = [];
-    for (const item of accounts || []) {
-      const b64 = item?.account?.data?.[0];
-      if (!b64) continue;
-      const buf = Buffer.from(b64, "base64");
-      const creator = decodeCreatorAccountBuffer(buf, item.pubkey);
-      if (creator) decoded.push(creator);
+  store.inflightCreators = (async () => {
+    try {
+      const accounts = await rpcCall("getProgramAccounts", [
+        PROGRAM_ID.toBase58(),
+        { encoding: "base64", commitment: "confirmed" },
+      ]);
+
+      const decoded: OnChainCreator[] = [];
+      for (const item of accounts || []) {
+        const b64 = item?.account?.data?.[0];
+        if (!b64) continue;
+        const buf = Buffer.from(b64, "base64");
+        const creator = decodeCreatorAccountBuffer(buf, item.pubkey);
+        if (creator) decoded.push(creator);
+      }
+
+      store.creatorsCache = { items: decoded, fetchedAt: Date.now() };
+      return decoded;
+    } catch (err) {
+      console.warn("fetchAllOnChainCreators RPC warning:", err);
+      return store.creatorsCache?.items || [];
+    } finally {
+      store.inflightCreators = null;
     }
+  })();
 
-    creatorsCache = { items: decoded, fetchedAt: Date.now() };
-    return decoded;
-  } catch (err) {
-    console.warn("fetchAllOnChainCreators RPC warning:", err);
-    return creatorsCache?.items || [];
-  }
+  return store.inflightCreators;
 }
 
 export async function fetchOnChainCreatorByUsername(
@@ -250,16 +278,36 @@ export async function fetchOnChainCreatorByUsername(
 export async function fetchVerifiedTransactionTip(
   signature: string
 ): Promise<OnChainTip | null> {
+  // Return immediately from immutable signature cache if already verified
+  for (const list of Array.from(verifiedTipsMemory.values())) {
+    const found = list.find((t) => t.signature === signature);
+    if (found) return found;
+  }
+  const cachedTx = txBySigCache.get(signature);
+  if (cachedTx) return cachedTx;
+
   const tx = await rpcCall("getTransaction", [
     signature,
-    { encoding: "json", maxSupportedTransactionVersion: 0, commitment: "confirmed" },
+    {
+      encoding: "json",
+      maxSupportedTransactionVersion: 0,
+      commitment: "confirmed",
+    },
   ]);
 
   if (!tx || tx.meta?.err !== null) {
     return null;
   }
 
-  return decodeTipEventFromLogs(tx.meta?.logMessages, signature, tx.blockTime);
+  const tip = decodeTipEventFromLogs(
+    tx.meta?.logMessages,
+    signature,
+    tx.blockTime
+  );
+  if (tip) {
+    txBySigCache.set(signature, tip);
+  }
+  return tip;
 }
 
 export async function fetchRecentTipsForCreator(
@@ -271,57 +319,80 @@ export async function fetchRecentTipsForCreator(
   const memTips = verifiedTipsMemory.get(key) || [];
 
   const cached = tipsCache.get(key);
-  if (!forceFresh && cached && Date.now() - cached.fetchedAt < 4_000) {
+  if (!forceFresh && cached && Date.now() - cached.fetchedAt < 10_000) {
     return mergeTips(memTips, cached.items);
   }
 
-  try {
-    const sigs = await rpcCall("getSignaturesForAddress", [
-      pda,
-      { limit: 15, commitment: "confirmed" },
-    ]);
+  const existingInflight = inflightTips.get(key);
+  if (existingInflight) return existingInflight;
 
-    const validSigs = (sigs || []).filter((s: any) => s.err === null);
-    if (validSigs.length === 0) {
-      tipsCache.set(key, { items: [], fetchedAt: Date.now() });
-      return memTips;
+  const task = (async () => {
+    try {
+      const sigs = await rpcCall("getSignaturesForAddress", [
+        pda,
+        { limit: 12, commitment: "confirmed" },
+      ]);
+
+      const validSigs = (sigs || []).filter((s: any) => s.err === null);
+      if (validSigs.length === 0) {
+        tipsCache.set(key, { items: [], fetchedAt: Date.now() });
+        return memTips;
+      }
+
+      const decodedTips: OnChainTip[] = [];
+      const unseenSigs: string[] = [];
+
+      for (const s of validSigs) {
+        if (txBySigCache.has(s.signature)) {
+          const hit = txBySigCache.get(s.signature);
+          if (hit) decodedTips.push(hit);
+        } else {
+          unseenSigs.push(s.signature);
+        }
+      }
+
+      // Fetch ONLY unseen signatures sequentially/slowly so public Devnet never 429s
+      for (const sig of unseenSigs) {
+        try {
+          const tx = await rpcCall(
+            "getTransaction",
+            [
+              sig,
+              {
+                encoding: "json",
+                maxSupportedTransactionVersion: 0,
+                commitment: "confirmed",
+              },
+            ],
+            1
+          );
+          if (tx && tx.meta?.err === null) {
+            const tip = decodeTipEventFromLogs(
+              tx.meta?.logMessages,
+              sig,
+              tx.blockTime
+            );
+            txBySigCache.set(sig, tip);
+            if (tip) decodedTips.push(tip);
+          }
+        } catch {
+          // Skip transient RPC error on individual historical tx
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+
+      tipsCache.set(key, { items: decodedTips, fetchedAt: Date.now() });
+      return mergeTips(memTips, decodedTips);
+    } catch (err) {
+      console.warn("fetchRecentTipsForCreator RPC warning:", err);
+      return mergeTips(memTips, cached?.items || []);
+    } finally {
+      inflightTips.delete(key);
     }
+  })();
 
-    const batchRes = await rpcBatch(
-      validSigs.map((s: any) => ({
-        method: "getTransaction",
-        params: [
-          s.signature,
-          {
-            encoding: "json",
-            maxSupportedTransactionVersion: 0,
-            commitment: "confirmed",
-          },
-        ],
-      }))
-    );
-
-    const decodedTips: OnChainTip[] = [];
-    const results = Array.isArray(batchRes) ? batchRes : [];
-
-    results.forEach((entry: any, idx: number) => {
-      const tx = entry?.result;
-      const sig = validSigs[idx]?.signature;
-      if (!tx || !sig || tx.meta?.err !== null) return;
-      const tip = decodeTipEventFromLogs(
-        tx.meta?.logMessages,
-        sig,
-        tx.blockTime
-      );
-      if (tip) decodedTips.push(tip);
-    });
-
-    tipsCache.set(key, { items: decodedTips, fetchedAt: Date.now() });
-    return mergeTips(memTips, decodedTips);
-  } catch (err) {
-    console.warn("fetchRecentTipsForCreator RPC warning:", err);
-    return mergeTips(memTips, cached?.items || []);
-  }
+  inflightTips.set(key, task);
+  return task;
 }
 
 function mergeTips(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
