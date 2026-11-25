@@ -85,13 +85,32 @@ export async function GET(
 
       // Push initial creator & recent tips snapshot immediately (keep init payload free of audio bytes)
       try {
-        const dbCreator = await getCreatorFromDb(username);
-        const creator =
-          dbCreator || (await fetchOnChainCreatorByUsername(username));
-        let tips = dbCreator ? await getTipsFromDb(username) : [];
-        if (tips.length === 0 && creator) {
-          tips = await fetchRecentTipsForCreator(username, creator.pda);
+        let dbCreator = null;
+        try {
+          dbCreator = await getCreatorFromDb(username);
+        } catch (err) {
+          console.warn("SSE DB creator read failed, falling back to chain:", err);
         }
+
+        const creator =
+          dbCreator ||
+          (await fetchOnChainCreatorByUsername(username).catch(() => null));
+
+        let tips: OnChainTip[] = [];
+        if (dbCreator) {
+          try {
+            tips = await getTipsFromDb(username);
+          } catch (err) {
+            console.warn("SSE DB tips read failed, falling back to chain:", err);
+          }
+        }
+
+        if (tips.length === 0 && creator) {
+          tips = await fetchRecentTipsForCreator(username, creator.pda).catch(
+            () => []
+          );
+        }
+
         send("init", {
           creator,
           tips: tips.map((t) => sanitizeTipForSse(t, true)),
