@@ -1,23 +1,59 @@
 # SolStream ⚡
 
-**Non-Custodial Web3 Live-Streaming Monetization on Solana Devnet**  
-*Built for the DEV3PACK Solana Hackathon*
+**Fan tips, wallet to wallet—the AI-voiced alert appears on OBS in about 1 second.**  
+*Non-custodial Web3 live-streaming monetization built on Solana Devnet for the DEV3PACK Solana Hackathon.*
+
+[![Live App](https://img.shields.io/badge/Live%20App-solstream--six.vercel.app-14F195?style=for-the-badge)](https://solstream-six.vercel.app)
+[![Solana Devnet](https://img.shields.io/badge/Solana-Devnet-9945FF?style=for-the-badge)](https://solscan.io/account/BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA?cluster=devnet)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](./LICENSE)
 
 - **Live App:** [https://solstream-six.vercel.app](https://solstream-six.vercel.app)
+- **Live Health Check:** [https://solstream-six.vercel.app/api/health](https://solstream-six.vercel.app/api/health)
 - **Devnet Program ID:** [`BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`](https://solscan.io/account/BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA?cluster=devnet)
 
 ---
 
-## 🎯 Problem & Solution
+## ⚡ How It Works
 
-Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) take **30%–50% cuts**, delay payouts up to 60 days, and remain completely unavailable across developing regions without PayPal or Stripe access.
+**Fan** → **Tip Page, Solana Blink, or OBS QR** → **Solana `send_tip` Transaction (0% cut)** → **Verifier / Watcher** → **OBS Overlay with AI Voice**
 
-**SolStream** turns Solana into a zero-fee, real-time creator tip rail directly connected to **OBS Studio**:
-- **0% Platform Cut:** Tips transfer peer-to-peer from donor wallet to creator wallet via Anchor `SystemProgram::transfer` CPI.
-- **Instant On-Chain Finality:** Sub-second confirmation with public Solscan proof on every tip.
-- **Real-Time OBS Browser Source:** Transparent 1920×1080 overlay pops up with spring animations, a synth chime, AI text-to-speech alert reading, and a live stream goal bar.
-- **Multilingual / Amharic UTF-8 Support:** Smart contract enforces byte boundaries (`300 bytes` message limit) so creators and fans can stream in Amharic (`መልካም ስራ! በርታ!`) and English seamlessly.
-- **Live Solana Ecosystem Price Feed:** Homepage displays live CoinGecko/Binance prices, 24h changes, 7d sparklines, and live USD micro-tip equivalents.
+```mermaid
+flowchart LR
+  Fan["Fan (Web / Mobile / Blink)"] -->|"Tip or Poll Vote"| Tx["Solana Anchor send_tip CPI"]
+  Tx -->|"100% Direct SOL"| Creator["Creator Wallet"]
+  Tx -->|"TipEvent Proof"| Watcher["/api/tips/verify & /api/tips/watch"]
+  Watcher -->|"Generate Voice MP3"| TTS["ElevenLabs AI TTS"]
+  TTS -->|"Store + Realtime"| DB["Supabase Postgres & Storage"]
+  Watcher -->|"<10ms SSE Push"| OBS["OBS Studio Overlay (/overlay/[username])"]
+```
+
+---
+
+## 🌍 Why Solana?
+
+Traditional platforms (Twitch Bits, YouTube SuperChat) take **30%–50% cuts**, hold payouts for weeks, and require **PayPal or Stripe**—locking out creators across Ethiopia and much of the developing world. Solana removes all of those barriers with **sub-second finality**, **fraction-of-a-cent transaction fees** that make `0.001 SOL` micro-tips viable, and **permissionless wallet-to-wallet settlement** with zero middlemen.
+
+---
+
+## ✨ Headline Features
+
+1. **Amharic & Multilingual Live Voice Alerts:** Smart-contract UTF-8 byte validation (`300 bytes`) lets fans tip and trigger live on-stream alerts in **Amharic (`መልካም ስራ! በርታ!`)**, English, and 32 ElevenLabs AI voice languages—with instant browser speech fallback.
+2. **0% Platform Cut via Anchor CPI:** Every tip executes a direct `SystemProgram::transfer` CPI from fan wallet to creator wallet inside [`programs/solstream/src/lib.rs`](./programs/solstream/src/lib.rs). SolStream never holds user funds.
+3. **Customizable OBS Studio Overlay (`/overlay/[username]`):** Transparent 1920×1080 Browser Source with spring-animated alert cards, synth chimes, live stream goal bar, live poll HUD, and Solana Pay QR—every widget is **draggable and proportionally resizable (`50%–180%`)** right inside the overlay.
+4. **Solana Blinks & Mobile Scan-to-Tip QR:** Fans can tip or vote from any Solana Actions v2.2 client (`/actions.json`) or scan the live QR code straight off the stream with Phantom/Solflare mobile.
+5. **Live Micro-Vote Polls & Firecrawl Bio Auto-Fill:** Creators sign an Ed25519 message in Creator Studio to run `Option A` vs `Option B` tip-powered polls, and can paste any Twitch/YouTube/Kick URL on `/claim` to auto-fill their handle and goal via Firecrawl.
+
+---
+
+## 🚀 Try It in 2 Minutes
+
+1. **Open the live app:** [https://solstream-six.vercel.app](https://solstream-six.vercel.app)
+2. **Watch the OBS overlay in a second tab:** [https://solstream-six.vercel.app/overlay/amayu?preview=1](https://solstream-six.vercel.app/overlay/amayu?preview=1)
+3. **Connect Phantom (or Solflare) switched to Solana Devnet** on the tip page: [https://solstream-six.vercel.app/amayu](https://solstream-six.vercel.app/amayu)
+4. **Tip `0.001 SOL`** (or pick any preset / Amharic chip) and approve the transaction.
+5. **Watch the overlay tab:** The alert card, synth chime, AI voice alert, goal bar, and supporter counter update live in ~1 second.
+
+*(Want to try Creator Studio? Click **Creator Studio** on the homepage, connect your Devnet wallet, and claim your own handle on `/claim`.)*
 
 ---
 
@@ -26,115 +62,69 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 - **Program ID:** [`BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`](https://solscan.io/account/BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA?cluster=devnet)
 - **Contract Source:** [`programs/solstream/src/lib.rs`](./programs/solstream/src/lib.rs)
 - **Anchor 0.30 IDL:** [`src/idl/solstream.json`](./src/idl/solstream.json)
-
-### Instructions & Accounts
-- `initialize_creator(username, voice_id, goal_target, goal_title)` — Allocates creator PDA (`[b"creator", authority]`) and locks global handle uniqueness in `HandleRegistry` (`[b"handle", username.as_bytes()]`), rejecting reserved platform route handles (`ReservedUsername`).
-- `register_existing_handle(username)` — One-time backfill helper allowing pre-`HandleRegistry` creators to lock their existing handle PDA on-chain.
-- `send_tip(amount, tier, display_name, message)` — Enforces `amount >= 1_000_000` lamports (`0.001 SOL`), locks recipient with `has_one = authority`, executes CPI transfer, updates counters with `checked_add`, and emits `TipEvent`.
-- `update_goal(new_target, new_title)` — Creator-only goal manager.
-- `update_voice(new_voice_id)` — Creator-only alert persona updater.
+- **Instructions:**
+  - `initialize_creator(username, voice_id, goal_target, goal_title)` — Creates `CreatorAccount` (`["creator", authority]`) and locks unique handle in `HandleRegistry` (`["handle", username]`).
+  - `register_existing_handle()` — Backfill helper locking legacy handles in `HandleRegistry`.
+  - `send_tip(amount, tier, display_name, message)` — Enforces `>= 1_000_000` lamports (`0.001 SOL`), transfers directly to creator `authority`, updates on-chain stats, and emits `TipEvent`.
+  - `update_goal(new_target, new_title)` & `update_voice(new_voice_id)` — Authority-only stream studio updates.
 
 ---
 
-## 🗂️ Application Routes
+<details>
+<summary><strong>📡 API Reference & Application Routes (13 Routes)</strong></summary>
 
 | Route | Purpose |
 | :--- | :--- |
-| `/` | Homepage, interactive flow preview, handle claim bar, and Live Solana Ecosystem Market Board (`/api/prices`). |
-| `/claim` | On-chain handle registration, alert voice picker, and stream goal setup. |
-| `/dashboard` | Creator Studio with OBS Browser Source URL, live SOL metrics, goal & voice controls, and realtime tip ledger. |
-| `/[username]` | Public fan tipping page with 6 micro-tiers, live SOL/USD converter, Amharic preset chips, and sorted Top Supporters leaderboard. |
-| `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with customizable/draggable widgets (alert card, goal bar, poll bar, Solana Pay QR), 7s auto-dismiss alert cards, synth chime + ElevenLabs AI voice (with browser speech fallback), and FIFO queue. |
-| `/actions.json` & `/api/actions/tip/[username]` | Solana Actions v2.2 & Blinks endpoint (`GET`/`POST`/`OPTIONS`) returning serialized `send_tip` Anchor transactions with preset tiers, poll vote buttons, custom alert messages, and `/confirm` OBS/TTS callback. |
-| `/api/polls/[username]` | Wallet-signature-authenticated Live Micro-Vote poll API (`GET`/`POST`) backed by Supabase `creator_polls` and verified on-chain tips. |
-| `/api/tips/watch` | Watches a Solana Pay `reference` public key so mobile QR tips auto-verify and fire on OBS in ~1 second. |
-| `/api/creators/import-profile` | Optional Firecrawl-powered URL scraper that auto-fills creator handle & stream goal ideas on `/claim`. |
-| `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST`, fails closed with `503` if `SOLSTREAM_RECOVERY_SECRET` / `CRON_SECRET` is unset and `401` if unauthorized) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
-| `/api/health` | Runtime health check returning `{ ok, db, rpc, timestamp }` after probing Postgres (`SELECT 1`) and Solana Devnet RPC (`getSlot`). |
-| `/api/prices` | Server-cached live Solana ecosystem price feed (CoinGecko primary with Binance fallback). |
+| `/` | Landing page, interactive tip preview, handle claim bar, Creator Studio shortcut, and Live Solana Market Board (`/api/prices`). |
+| `/claim` | On-chain handle registration, optional Firecrawl URL auto-fill, alert voice picker, and stream goal setup. |
+| `/dashboard` | Creator Studio with OBS Browser Source URL, live SOL metrics, goal & voice controls, Live Micro-Vote Poll manager, QR modal, and realtime tip ledger. |
+| `/[username]` | Public fan tipping page with 6 micro-tiers, live SOL/USD converter, Amharic preset chips, Live Poll voting, Blink share link, and Top Supporters leaderboard. |
+| `/overlay/[username]` | Transparent OBS Browser Source overlay with draggable & resizable widgets (`50%–180%`), ElevenLabs AI voice + browser fallback, and FIFO alert queue. |
+| `/actions.json` | Solana Actions v2.2 manifest mapping `/api/actions/**` and `/tip/*`. |
+| `/api/actions/tip/[username]` | Blink `GET`/`POST` endpoint building serialized `send_tip` transactions with preset tiers, poll votes, and Solana Pay `ref` forwarding. |
+| `/api/actions/tip/[username]/confirm` | Chained Action callback triggering OBS SSE and TTS on Blink settlement. |
+| `/api/polls/[username]` | Ed25519 wallet-signature-authenticated Live Micro-Vote poll API (`GET`/`POST`) with replay-nonce protection. |
+| `/api/tips/verify` | Fail-closed on-chain tip verifier, ElevenLabs TTS generator, Supabase writer, and instant OBS SSE broadcaster. |
+| `/api/tips/watch` | Watches Solana Pay `reference` keys so mobile QR tips auto-verify and fire on OBS. |
+| `/api/creators/import-profile` | Firecrawl-powered URL scraper with SSRF & private-IP/DNS validation for `/claim`. |
+| `/api/tips/recover` | Secret-protected (`503` if unset, `401` if invalid) background signature recovery endpoint. |
+| `/api/health` | Readiness probe returning `{ ok, db, rpc, timestamp }` via Postgres + Solana Devnet `getSlot`. |
+| `/api/prices` | Server-cached live Solana ecosystem prices (CoinGecko primary, Binance fallback). |
+
+</details>
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech Stack & Local Setup
 
-- **Blockchain:** Solana Devnet, Anchor `0.30.1` (Rust), Solana Actions/Blinks v2.2 & Solana Pay
-- **Database & Audio Storage:** Supabase PostgreSQL, Realtime, Storage (`stream-alerts/<username>/<signature>.mp3`), and Row-Level Security
-- **AI & Content:** ElevenLabs TTS (`eleven_flash_v2_5`, 32 languages) + optional Firecrawl URL auto-fill
-- **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS
-- **Typography:** `Space Grotesk`, `Plus Jakarta Sans`, `JetBrains Mono`
-- **Wallets:** `@solana/wallet-adapter-react` (Solana Wallet Standard: Phantom, Solflare, Backpack)
-- **Market Data:** CoinGecko Markets API & Binance 24h Ticker API
-
----
-
-## 🗓️ Hackathon Build Timeline (Dev3Pack 27–29 Nov 2026)
-
-- **Built Before Nov 27:** Core Anchor `solstream` smart contract (`CreatorAccount`, `HandleRegistry`, `send_tip`, `update_goal`, `update_voice`), `/claim`, `/dashboard`, `/[username]`, `/overlay/[username]` with customizable widget layout, Supabase schema (`001_solstream_schema.sql`), and ElevenLabs server-side TTS pipeline.
-- **Built During Nov 27–29:**
-  - **Solana Blinks & Actions v2.2** (`/actions.json`, `/api/actions/tip/[username]`, `/confirm` chained OBS/TTS trigger, and share/inspect links in Dashboard & Tip Page).
-  - **Live Micro-Vote Polls** (`002_creator_polls.sql`, Ed25519 wallet-signature-authenticated `/api/polls/[username]`, on-chain `[VOTE:A]` / `[VOTE:B]` tallying, Dashboard Poll Manager, Tip Page poll voting, and draggable OBS overlay poll HUD).
-  - **Scannable Solana Pay Mobile QR on OBS** (`/api/tips/watch` reference key watcher + draggable OBS QR HUD + Dashboard QR mode switch).
-  - **Optional Firecrawl Channel Importer** (`/api/creators/import-profile` + `/claim` channel URL auto-fill).
-
----
-
-## 🚀 Local Setup
-
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-2. Configure environment variables (copy `.env.example` to `.env.local`):
-   - Set `DATABASE_URL`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_ANON_KEY` for Supabase persistence and Realtime alerts.
-   - Set `ELEVENLABS_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` to upload ElevenLabs TTS MP3 files to the public `stream-alerts` Supabase Storage bucket (`stream-alerts/<username>/<signature>.mp3`) and store only the public URL in `tips.audio_url`. When storage is not configured, `tips.audio_url` is stored as `null` and the OBS overlay falls back to browser speech synthesis.
-
-3. Run development server:
-   ```bash
-   npm run dev
-   ```
-
-4. Open [http://localhost:3000](http://localhost:3000) and connect your Phantom wallet switched to **Solana Devnet**.
-
----
-
-## 🧪 Typechecking, Linting & Anchor Tests
-
-### Frontend & API Checks
-```bash
-npm run typecheck
-npm run lint
-npm run test:unit
-npm run build
-```
-
-### Database Migrations (`supabase/migrations/`)
-Run the numbered migrations in order against your Supabase PostgreSQL instance:
-1. `001_solstream_schema.sql` — `creators` and `tips` tables + RLS + Realtime publication.
-2. `002_creator_polls.sql` — `creator_polls` table + Realtime publication for Live Micro-Vote polls.
-3. `003_tips_creator_id_index.sql` — `idx_tips_creator_id` index for fast leaderboard queries.
-
-### Anchor Smart Contract Build & Test Setup
-This workspace includes standard Anchor `0.30.1` scaffolding ([`Anchor.toml`](./Anchor.toml), [`Cargo.toml`](./Cargo.toml), [`programs/solstream/Cargo.toml`](./programs/solstream/Cargo.toml), and [`target/types/solstream.ts`](./target/types/solstream.ts)) bound to program ID `BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`. Anchor Mocha tests compile via [`tsconfig.test.json`](./tsconfig.test.json) (`npm run test:anchor`).
-
-To build the Solana program and run the full Anchor Mocha test suite in [`tests/solstream.ts`](./tests/solstream.ts) (requires Rust, Solana CLI, and Anchor CLI `0.30.1`, e.g. on Linux/macOS/WSL2 or via GitHub Actions CI in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)):
-```bash
-# Install Anchor 0.30.1 + Solana CLI, then:
-anchor build
-npm test   # runs `anchor test` against local validator
-```
-When upgrading the Devnet program (e.g., to enable `HandleRegistry`, `register_existing_handle`, or `ReservedUsername`), follow [`HANDLE_REGISTRY_MIGRATION.md`](./HANDLE_REGISTRY_MIGRATION.md) and commit the generated `Cargo.lock` for reproducible Anchor builds.
-
----
-
-## 🔒 Security & Least-Privilege Database Role
-
-- **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Hosted Supabase pooler connections require the Supabase root CA via `DATABASE_SSL_CA` (PEM contents) or `PGSSLROOTCERT` (file path). Never commit `.crt` / `.pem` certificate files to Git—configure them via environment variables or secret managers in deployment.
-- **Protected Recovery Route:** `/api/tips/recover` fails closed (`503`) when neither `SOLSTREAM_RECOVERY_SECRET` nor `CRON_SECRET` is configured, and rejects missing/invalid credentials with `401`.
-- **Least-Privilege DB Role:** Create a dedicated non-superuser role (`solstream_app`) with access limited to `public.creators`, `public.tips`, and `public.creator_polls` (no `CREATE`, `DROP`, `ALTER`, or `TRUNCATE`):
-  ```sql
-  CREATE ROLE solstream_app WITH LOGIN PASSWORD 'REPLACE_WITH_STRONG_PASSWORD' NOBYPASSRLS;
-  GRANT USAGE ON SCHEMA public TO solstream_app;
-  GRANT SELECT, INSERT, UPDATE ON TABLE public.creators, public.tips, public.creator_polls TO solstream_app;
+- **Stack:** Solana Devnet · Anchor `0.30.1` (Rust) · Next.js `16.4.6` (App Router) · React `19` · TypeScript · Tailwind CSS · Supabase (PostgreSQL, Realtime, Storage) · ElevenLabs TTS · Firecrawl
+- **Install & Run Locally:**
+  ```bash
+  npm install
+  cp .env.example .env.local   # Add DATABASE_URL, DATABASE_SSL_CA, Supabase, ElevenLabs keys
+  npm run dev
   ```
-- **API Rate Limits & Fail-Closed Verify:** `POST /api/tips/verify` fails closed (`503`) if the database is unavailable (without running TTS or SSE), and rate limits protect `/api/tips/verify`, `/api/creators/register`, `?fresh=1`, `?refresh=1`, and SSE endpoints (`429`).
+- **Verify & Test:**
+  ```bash
+  npm run typecheck   # tsc --noEmit
+  npm run lint        # eslint . (0 warnings)
+  npm run test:unit   # 20 offline unit & route tests (Mocha + Chai)
+  npm run build       # next build --webpack
+  ```
+- **Database Migrations (`supabase/migrations/`):** Run `001_solstream_schema.sql`, `002_creator_polls.sql`, and `003_tips_creator_id_index.sql` in order.
+- **Anchor Tests & Upgrade:** See [`HANDLE_REGISTRY_MIGRATION.md`](./HANDLE_REGISTRY_MIGRATION.md) and [`tests/solstream.ts`](./tests/solstream.ts) (`anchor build && anchor test`).
+
+---
+
+## 🗺️ Roadmap
+
+- **Phase 1 (Current — Devnet):** 0% cut CPI tips, OBS draggable/resizable overlay, ElevenLabs Amharic/multilingual AI alerts, Solana Blinks, Solana Pay QR, and Live Micro-Vote Polls.
+- **Phase 2 (Program Upgrade & Mainnet-Beta):** Upgrade Devnet program with `HandleRegistry` + `ReservedUsername` per [`HANDLE_REGISTRY_MIGRATION.md`](./HANDLE_REGISTRY_MIGRATION.md), audit, and launch on Solana Mainnet-Beta.
+- **Phase 3 (Ecosystem & Mobile):** SPL token / USDC micro-tips, creator subscriber badges, and native Solana Mobile Seeker integration.
+
+---
+
+## 👥 Team & License
+
+Built by **Amayu Kaba** ([@amayukf](https://github.com/amayukf)) for the **DEV3PACK Solana Hackathon**.  
+Licensed under the [MIT License](./LICENSE).
