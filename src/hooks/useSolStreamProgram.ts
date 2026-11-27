@@ -3,7 +3,7 @@
 import { useMemo, useCallback } from "react";
 import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { AnchorProvider, Program, BN } from "@coral-xyz/anchor";
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { PROGRAM_ID } from "@/lib/constants";
 import { IDL } from "@/idl/solstream";
 
@@ -210,6 +210,40 @@ export function useSolStreamProgram() {
     [program, connection]
   );
 
+  const sendProgramTransaction = useCallback(
+    async (tx: Transaction) => {
+      if (!wallet.publicKey) throw new Error("Wallet not connected");
+      const latest = await connection.getLatestBlockhash("confirmed");
+      tx.feePayer = wallet.publicKey;
+      tx.recentBlockhash = latest.blockhash;
+
+      let signature: string;
+      if (wallet.sendTransaction) {
+        signature = await wallet.sendTransaction(tx, connection, {
+          preflightCommitment: "confirmed",
+        });
+      } else if (wallet.signTransaction) {
+        const signed = await wallet.signTransaction(tx);
+        signature = await connection.sendRawTransaction(signed.serialize(), {
+          preflightCommitment: "confirmed",
+        });
+      } else {
+        throw new Error("Connected wallet does not support sending transactions");
+      }
+
+      await connection.confirmTransaction(
+        {
+          signature,
+          blockhash: latest.blockhash,
+          lastValidBlockHeight: latest.lastValidBlockHeight,
+        },
+        "confirmed"
+      );
+      return signature;
+    },
+    [connection, wallet]
+  );
+
   const initializeCreator = useCallback(
     async (
       username: string,
@@ -223,7 +257,7 @@ export function useSolStreamProgram() {
       const handlePda = getHandlePda(cleanUsername);
       const methods = (program as any).methods;
 
-      const tx = await methods
+      const transaction: Transaction = await methods
         .initializeCreator(
           cleanUsername,
           voiceId,
@@ -236,11 +270,12 @@ export function useSolStreamProgram() {
           authority: wallet.publicKey,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .transaction();
 
+      const tx = await sendProgramTransaction(transaction);
       return { tx, pda: creatorPda, handlePda };
     },
-    [program, wallet.publicKey, getCreatorPda, getHandlePda]
+    [program, wallet.publicKey, getCreatorPda, getHandlePda, sendProgramTransaction]
   );
 
   const registerExistingHandle = useCallback(
@@ -251,7 +286,7 @@ export function useSolStreamProgram() {
       const handlePda = getHandlePda(cleanUsername);
       const methods = (program as any).methods;
 
-      const tx = await methods
+      const transaction: Transaction = await methods
         .registerExistingHandle()
         .accounts({
           creatorAccount: creatorPda,
@@ -259,11 +294,12 @@ export function useSolStreamProgram() {
           authority: wallet.publicKey,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .transaction();
 
+      const tx = await sendProgramTransaction(transaction);
       return { tx, handlePda };
     },
-    [program, wallet.publicKey, getCreatorPda, getHandlePda]
+    [program, wallet.publicKey, getCreatorPda, getHandlePda, sendProgramTransaction]
   );
 
   const sendTip = useCallback(
@@ -278,7 +314,7 @@ export function useSolStreamProgram() {
       const creatorPda = getCreatorPda(creatorAuthority);
       const methods = (program as any).methods;
 
-      const tx = await methods
+      const transaction: Transaction = await methods
         .sendTip(
           new BN(amountLamports.toString()),
           tier,
@@ -291,11 +327,12 @@ export function useSolStreamProgram() {
           authority: creatorAuthority,
           systemProgram: SystemProgram.programId,
         })
-        .rpc();
+        .transaction();
 
+      const tx = await sendProgramTransaction(transaction);
       return { tx, creatorPda };
     },
-    [program, wallet.publicKey, getCreatorPda]
+    [program, wallet.publicKey, getCreatorPda, sendProgramTransaction]
   );
 
   const updateGoal = useCallback(
@@ -304,15 +341,17 @@ export function useSolStreamProgram() {
       const creatorPda = getCreatorPda(wallet.publicKey);
       const methods = (program as any).methods;
 
-      return await methods
+      const transaction: Transaction = await methods
         .updateGoal(new BN(newTargetLamports.toString()), newTitle)
         .accounts({
           creatorAccount: creatorPda,
           authority: wallet.publicKey,
         })
-        .rpc();
+        .transaction();
+
+      return await sendProgramTransaction(transaction);
     },
-    [program, wallet.publicKey, getCreatorPda]
+    [program, wallet.publicKey, getCreatorPda, sendProgramTransaction]
   );
 
   const updateVoice = useCallback(
@@ -321,15 +360,17 @@ export function useSolStreamProgram() {
       const creatorPda = getCreatorPda(wallet.publicKey);
       const methods = (program as any).methods;
 
-      return await methods
+      const transaction: Transaction = await methods
         .updateVoice(newVoiceId)
         .accounts({
           creatorAccount: creatorPda,
           authority: wallet.publicKey,
         })
-        .rpc();
+        .transaction();
+
+      return await sendProgramTransaction(transaction);
     },
-    [program, wallet.publicKey, getCreatorPda]
+    [program, wallet.publicKey, getCreatorPda, sendProgramTransaction]
   );
 
   return {
