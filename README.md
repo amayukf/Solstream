@@ -1,4 +1,4 @@
-# SolStream ⚡
+# SolStream 
 
 **Fan tips, wallet to wallet—the AI-voiced alert appears on OBS in about 1 second.**  
 *Non-custodial Web3 live-streaming monetization built on Solana Devnet for the DEV3PACK Solana Hackathon.*
@@ -13,7 +13,7 @@
 
 ---
 
-## ⚡ How It Works
+##  How It Works
 
 **Fan** → **Tip Page, Solana Blink, or OBS QR** → **Solana `send_tip` Transaction (0% cut)** → **Verifier / Watcher** → **OBS Overlay with AI Voice**
 
