@@ -10,7 +10,8 @@ import {
 } from "@/lib/constants";
 import { MicroTierSelector } from "@/components/tipping/MicroTierSelector";
 import { GiftIcon } from "@/components/tipping/GiftIcon";
-import { AlertCircle, Loader2, Sparkles } from "lucide-react";
+import { AlertCircle, Loader2, Sparkles, Vote } from "lucide-react";
+import type { CreatorPollState } from "@/lib/polls";
 
 const WalletMultiButton = dynamic(
   async () =>
@@ -24,6 +25,7 @@ interface TipFormProps {
   solUsdPrice: number | null;
   isLoading: boolean;
   externalError?: string | null;
+  activePoll?: CreatorPollState | null;
   onSendTip: (
     amountLamports: number,
     amountSol: number,
@@ -49,11 +51,13 @@ export const TipForm: React.FC<TipFormProps> = ({
   solUsdPrice,
   isLoading,
   externalError,
+  activePoll,
   onSendTip,
 }) => {
   const { connected } = useWallet();
   const [selectedGift, setSelectedGift] = useState<GiftTier>(GIFT_TIERS[0]);
   const [isCustomMode, setIsCustomMode] = useState(false);
+  const [selectedVote, setSelectedVote] = useState<"A" | "B" | null>(null);
   const [displayName, setDisplayName] = useState("");
   const [customAmount, setCustomAmount] = useState(
     GIFT_TIERS[0].amountSol.toString()
@@ -130,7 +134,11 @@ export const TipForm: React.FC<TipFormProps> = ({
       return;
     }
 
-    const trimmedMsg = message.trim() || "መልካም ስራ!";
+    const baseMsg = message.trim() || "መልካም ስራ!";
+    const trimmedMsg =
+      selectedVote && activePoll?.isActive
+        ? `[VOTE:${selectedVote}] ${baseMsg}`
+        : baseMsg;
     const trimmedName = displayName.trim() || "Anonymous";
 
     if (new TextEncoder().encode(trimmedMsg).length > 300) {
@@ -140,6 +148,14 @@ export const TipForm: React.FC<TipFormProps> = ({
     if (new TextEncoder().encode(trimmedName).length > 96) {
       setLocalError("Display name exceeds the 96-byte on-chain UTF-8 limit.");
       return;
+    }
+
+    if (selectedVote && activePoll?.isActive) {
+      const minVoteSol = (activePoll.minVoteLamports || 1_000_000) / 1_000_000_000;
+      if (solVal < minVoteSol) {
+        setLocalError(`Minimum tip to vote in this poll is ${minVoteSol} SOL.`);
+        return;
+      }
     }
 
     const resolvedTier = isCustomMode
@@ -268,6 +284,71 @@ export const TipForm: React.FC<TipFormProps> = ({
           className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-[#9945FF]"
         />
       </div>
+
+      {/* Live Micro-Vote Poll Option (when creator has an active poll) */}
+      {activePoll && activePoll.isActive && (() => {
+        const totalVotes = activePoll.votesA + activePoll.votesB;
+        const pctA = totalVotes > 0 ? Math.round((activePoll.votesA / totalVotes) * 100) : 50;
+        const pctB = totalVotes > 0 ? 100 - pctA : 50;
+        const minVoteSol = (activePoll.minVoteLamports || 1_000_000) / 1_000_000_000;
+        const handleToggleVote = (choice: "A" | "B") => {
+          const next = selectedVote === choice ? null : choice;
+          setSelectedVote(next);
+          if (next) {
+            const currentSol = parseFloat(customAmount) || 0;
+            if (currentSol < minVoteSol) {
+              setIsCustomMode(true);
+              setCustomAmount(minVoteSol.toString());
+              setSelectedGift(getTierForAmountSol(minVoteSol));
+            }
+          }
+        };
+        return (
+          <div className="rounded-2xl bg-[#0D111C] border border-[#9945FF]/35 p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 text-[11px]">
+              <span className="font-bold text-white flex items-center gap-1.5">
+                <Vote className="w-3.5 h-3.5 text-[#9945FF]" />
+                <span>Live Poll: {activePoll.question}</span>
+              </span>
+              <span className="font-mono text-zinc-400">min {minVoteSol} SOL</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleToggleVote("A")}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  selectedVote === "A"
+                    ? "bg-[#9945FF]/20 border-[#9945FF] text-white"
+                    : "bg-[#090A0F] border-white/10 text-zinc-300 hover:border-white/25"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="truncate">A · {activePoll.optionA}</span>
+                  <span className="font-mono text-[#14F195] ml-2">
+                    {pctA}% ({activePoll.votesA})
+                  </span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleVote("B")}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  selectedVote === "B"
+                    ? "bg-[#14F195]/15 border-[#14F195] text-white"
+                    : "bg-[#090A0F] border-white/10 text-zinc-300 hover:border-white/25"
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs font-bold">
+                  <span className="truncate">B · {activePoll.optionB}</span>
+                  <span className="font-mono text-[#00F0FF] ml-2">
+                    {pctB}% ({activePoll.votesB})
+                  </span>
+                </div>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Message Field */}
       <div>

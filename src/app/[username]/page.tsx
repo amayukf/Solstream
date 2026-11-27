@@ -24,7 +24,8 @@ import { StreamGoalCard } from "@/components/tipping/StreamGoalCard";
 import { TipForm } from "@/components/tipping/TipForm";
 import { TopDonorsLeaderboard } from "@/components/tipping/TopDonorsLeaderboard";
 import { TipSuccessModal } from "@/components/tipping/TipSuccessModal";
-import { Loader2, AlertCircle } from "lucide-react";
+import type { CreatorPollState } from "@/lib/polls";
+import { Loader2, AlertCircle, Zap, Copy, Check, ExternalLink } from "lucide-react";
 
 const WalletMultiButton = dynamic(
   async () =>
@@ -49,6 +50,8 @@ export default function FanTippingPage({
 
   const [tips, setTips] = useState<TipRecord[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[] | null>(null);
+  const [activePoll, setActivePoll] = useState<CreatorPollState | null>(null);
+  const [isBlinkCopied, setIsBlinkCopied] = useState(false);
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const flushingVerifyRef = useRef(false);
 
@@ -166,6 +169,9 @@ export default function FanTippingPage({
 
             if (Array.isArray(data.leaderboard)) {
               setLeaderboard(data.leaderboard);
+            }
+            if (data.poll !== undefined) {
+              setActivePoll(data.poll || null);
             }
 
             setTips((prev) =>
@@ -311,6 +317,9 @@ export default function FanTippingPage({
                 .then((freshData) => {
                   if (Array.isArray(freshData?.leaderboard)) {
                     setLeaderboard(freshData.leaderboard);
+                  }
+                  if (freshData?.poll !== undefined) {
+                    setActivePoll(freshData.poll || null);
                   }
                 })
                 .catch(() => {});
@@ -519,6 +528,60 @@ export default function FanTippingPage({
               currentSol={creatorProfile.goalCurrentSol}
               targetSol={creatorProfile.goalTargetSol}
             />
+            {creatorProfile.isInitialized && (
+              <div className="rounded-2xl bg-[#13141F] border border-[#9945FF]/30 p-4 space-y-2.5">
+                <div className="flex items-center justify-between text-xs font-bold text-white">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-[#14F195]" />
+                    <span>Solana Blink Ready</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-zinc-400">Actions v2.2</span>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Share this creator&apos;s interactive Blink card anywhere Blinks are supported.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof window === "undefined") return;
+                      const blinkUrl = `${window.location.origin}/api/actions/tip/${username}`;
+                      navigator.clipboard.writeText(blinkUrl);
+                      setIsBlinkCopied(true);
+                      setTimeout(() => setIsBlinkCopied(false), 2000);
+                    }}
+                    className="flex-1 py-2 px-3 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white inline-flex items-center justify-center gap-1.5"
+                  >
+                    {isBlinkCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-[#14F195]" />
+                        <span>Blink Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy Blink URL</span>
+                      </>
+                    )}
+                  </button>
+                  <a
+                    href={
+                      typeof window !== "undefined"
+                        ? `https://dial.to/?action=${encodeURIComponent(
+                            `solana-action:${window.location.origin}/api/actions/tip/${username}`
+                          )}&cluster=devnet`
+                        : "#"
+                    }
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Inspect / test in Dialect Blinks"
+                    className="p-2 rounded-xl bg-[#9945FF]/20 hover:bg-[#9945FF]/30 border border-[#9945FF]/40 text-white"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* COLUMN 2: SEND A TIP FORM (6 cols) */}
@@ -529,6 +592,7 @@ export default function FanTippingPage({
               solUsdPrice={solUsdPrice}
               isLoading={isLoading}
               externalError={error}
+              activePoll={activePoll}
               onSendTip={handleSendTip}
             />
           </div>

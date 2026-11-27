@@ -40,7 +40,11 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 | `/claim` | On-chain handle registration, alert voice picker, and stream goal setup. |
 | `/dashboard` | Creator Studio with OBS Browser Source URL, live SOL metrics, goal & voice controls, and realtime tip ledger. |
 | `/[username]` | Public fan tipping page with 6 micro-tiers, live SOL/USD converter, Amharic preset chips, and sorted Top Supporters leaderboard. |
-| `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with 7s auto-dismiss alert cards, synth chime + ElevenLabs AI voice (with browser speech fallback), FIFO queue, and goal bar. |
+| `/overlay/[username]` | Transparent OBS Studio Browser Source overlay with customizable/draggable widgets (alert card, goal bar, poll bar, Solana Pay QR), 7s auto-dismiss alert cards, synth chime + ElevenLabs AI voice (with browser speech fallback), and FIFO queue. |
+| `/actions.json` & `/api/actions/tip/[username]` | Solana Actions v2.2 & Blinks endpoint (`GET`/`POST`/`OPTIONS`) returning serialized `send_tip` Anchor transactions with preset tiers, poll vote buttons, custom alert messages, and `/confirm` OBS/TTS callback. |
+| `/api/polls/[username]` | Wallet-signature-authenticated Live Micro-Vote poll API (`GET`/`POST`) backed by Supabase `creator_polls` and verified on-chain tips. |
+| `/api/tips/watch` | Watches a Solana Pay `reference` public key so mobile QR tips auto-verify and fire on OBS in ~1 second. |
+| `/api/creators/import-profile` | Optional Firecrawl-powered URL scraper that auto-fills creator handle & stream goal ideas on `/claim`. |
 | `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST`, fails closed with `503` if `SOLSTREAM_RECOVERY_SECRET` / `CRON_SECRET` is unset and `401` if unauthorized) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
 | `/api/prices` | Server-cached live Solana ecosystem price feed (CoinGecko primary with Binance fallback). |
 
@@ -48,12 +52,24 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 
 ## 🛠️ Tech Stack
 
-- **Blockchain:** Solana Devnet, Anchor `0.30.1` (Rust)
-- **Database & Audio Storage:** Supabase PostgreSQL, Realtime, and Storage (`stream-alerts/<username>/<signature>.mp3`)
+- **Blockchain:** Solana Devnet, Anchor `0.30.1` (Rust), Solana Actions/Blinks v2.2 & Solana Pay
+- **Database & Audio Storage:** Supabase PostgreSQL, Realtime, Storage (`stream-alerts/<username>/<signature>.mp3`), and Row-Level Security
+- **AI & Content:** ElevenLabs TTS (`eleven_flash_v2_5`, 32 languages) + optional Firecrawl URL auto-fill
 - **Frontend:** Next.js 16 (App Router), TypeScript, Tailwind CSS
 - **Typography:** `Space Grotesk`, `Plus Jakarta Sans`, `JetBrains Mono`
 - **Wallets:** `@solana/wallet-adapter-react` (Solana Wallet Standard: Phantom, Solflare, Backpack)
 - **Market Data:** CoinGecko Markets API & Binance 24h Ticker API
+
+---
+
+## 🗓️ Hackathon Build Timeline (Dev3Pack 27–29 Nov 2026)
+
+- **Built Before Nov 27:** Core Anchor `solstream` smart contract (`CreatorAccount`, `HandleRegistry`, `send_tip`, `update_goal`, `update_voice`), `/claim`, `/dashboard`, `/[username]`, `/overlay/[username]` with customizable widget layout, Supabase schema (`001_solstream_schema.sql`), and ElevenLabs server-side TTS pipeline.
+- **Built During Nov 27–29:**
+  - **Solana Blinks & Actions v2.2** (`/actions.json`, `/api/actions/tip/[username]`, `/confirm` chained OBS/TTS trigger, and share/inspect links in Dashboard & Tip Page).
+  - **Live Micro-Vote Polls** (`002_creator_polls.sql`, Ed25519 wallet-signature-authenticated `/api/polls/[username]`, on-chain `[VOTE:A]` / `[VOTE:B]` tallying, Dashboard Poll Manager, Tip Page poll voting, and draggable OBS overlay poll HUD).
+  - **Scannable Solana Pay Mobile QR on OBS** (`/api/tips/watch` reference key watcher + draggable OBS QR HUD + Dashboard QR mode switch).
+  - **Optional Firecrawl Channel Importer** (`/api/creators/import-profile` + `/claim` channel URL auto-fill).
 
 ---
 
@@ -102,10 +118,10 @@ npm test   # runs `anchor test` against local validator
 
 - **Verified PostgreSQL TLS:** Server connections enforce certificate validation (`rejectUnauthorized: true`). Hosted Supabase pooler connections require the Supabase root CA via `DATABASE_SSL_CA` (PEM contents) or `PGSSLROOTCERT` (file path). Never commit `.crt` / `.pem` certificate files to Git—configure them via environment variables or secret managers in deployment.
 - **Protected Recovery Route:** `/api/tips/recover` fails closed (`503`) when neither `SOLSTREAM_RECOVERY_SECRET` nor `CRON_SECRET` is configured, and rejects missing/invalid credentials with `401`.
-- **Least-Privilege DB Role:** Create a dedicated non-superuser role (`solstream_app`) with access limited to `public.creators` and `public.tips` (no `CREATE`, `DROP`, `ALTER`, or `TRUNCATE`):
+- **Least-Privilege DB Role:** Create a dedicated non-superuser role (`solstream_app`) with access limited to `public.creators`, `public.tips`, and `public.creator_polls` (no `CREATE`, `DROP`, `ALTER`, or `TRUNCATE`):
   ```sql
   CREATE ROLE solstream_app WITH LOGIN PASSWORD 'REPLACE_WITH_STRONG_PASSWORD' NOBYPASSRLS;
   GRANT USAGE ON SCHEMA public TO solstream_app;
-  GRANT SELECT, INSERT, UPDATE ON TABLE public.creators, public.tips TO solstream_app;
+  GRANT SELECT, INSERT, UPDATE ON TABLE public.creators, public.tips, public.creator_polls TO solstream_app;
   ```
 - **API Rate Limits & Fail-Closed Verify:** `POST /api/tips/verify` fails closed (`503`) if the database is unavailable (without running TTS or SSE), and rate limits protect `/api/tips/verify`, `/api/creators/register`, `?fresh=1`, `?refresh=1`, and SSE endpoints (`429`).

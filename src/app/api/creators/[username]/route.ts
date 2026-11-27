@@ -10,12 +10,14 @@ import {
   getCreatorFromDb,
   getTipsFromDb,
   getTopDonorsFromDb,
+  getPollWithResultsFromDb,
   syncCreatorExactStatsInDb,
   insertTipInDb,
   isPostgresUniqueViolation,
   normalizeAudioUrl,
   type DbCreatorRow,
   type DbLeaderboardEntry,
+  type CreatorPollState,
 } from "@/lib/supabaseDb";
 import {
   checkRateLimit,
@@ -201,12 +203,20 @@ export async function GET(
 
     const mergedTips = mergeTipArrays(dbTips, chainTips);
     let leaderboard: DbLeaderboardEntry[] | null = null;
-    if (dbHealthy && resolvedCreator.id) {
+    let poll: CreatorPollState | null = null;
+    if (dbHealthy) {
+      if (resolvedCreator.id) {
+        try {
+          leaderboard = await getTopDonorsFromDb(resolvedCreator.id);
+        } catch (err) {
+          console.warn(`GET /api/creators/${username} leaderboard warning:`, err);
+          leaderboard = null;
+        }
+      }
       try {
-        leaderboard = await getTopDonorsFromDb(resolvedCreator.id);
+        poll = await getPollWithResultsFromDb(username);
       } catch (err) {
-        console.warn(`GET /api/creators/${username} leaderboard warning:`, err);
-        leaderboard = null;
+        console.warn(`GET /api/creators/${username} poll warning:`, err);
       }
     }
 
@@ -222,6 +232,7 @@ export async function GET(
       creator: resolvedCreator,
       tips: mergedTips,
       leaderboard,
+      poll,
     });
   } catch (err) {
     console.error("GET /api/creators/[username] error:", err);

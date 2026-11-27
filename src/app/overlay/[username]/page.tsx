@@ -1,10 +1,17 @@
 "use client";
 
 import React, { use, useState, useEffect, useRef, useCallback } from "react";
+import { Keypair } from "@solana/web3.js";
+import { QRCodeSVG } from "qrcode.react";
 import { getStoredTips, getStoredCreator } from "@/lib/storage";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import {
+  classifyPollVote,
+  stripVoteTagForSpeech,
+  type CreatorPollState,
+} from "@/lib/polls";
 import { GiftIcon } from "@/components/tipping/GiftIcon";
-import { Move, Pencil, RotateCcw, Check } from "lucide-react";
+import { Move, Pencil, RotateCcw, Check, QrCode, Vote } from "lucide-react";
 
 interface WidgetOffset {
   x: number;
@@ -15,6 +22,9 @@ interface OverlayLayout {
   alertPos: WidgetOffset;
   goalPos: WidgetOffset;
   supporterPos: WidgetOffset;
+  pollPos: WidgetOffset;
+  qrPos: WidgetOffset;
+  showQrWidget: boolean;
   customGoalTitle?: string;
 }
 
@@ -22,6 +32,9 @@ const DEFAULT_OVERLAY_LAYOUT: OverlayLayout = {
   alertPos: { x: 0, y: 0 },
   goalPos: { x: 0, y: 0 },
   supporterPos: { x: 0, y: 0 },
+  pollPos: { x: 0, y: 0 },
+  qrPos: { x: 0, y: 0 },
+  showQrWidget: false,
   customGoalTitle: "",
 };
 
@@ -144,7 +157,10 @@ function speakFastFallback(
   if (typeof window !== "undefined" && window.speechSynthesis) {
     try {
       window.speechSynthesis.cancel();
-      const text = `${displayName} tipped ${amountSol} SOL. ${message}`;
+      const spokenMsg = stripVoteTagForSpeech(message || "");
+      const text = spokenMsg
+        ? `${displayName} tipped ${amountSol} SOL. ${spokenMsg}`
+        : `${displayName} tipped ${amountSol} SOL.`;
       const utter = new SpeechSynthesisUtterance(text);
       utter.rate = 1.18; // Snappy fast stream delivery
       utter.pitch = 1.0;
@@ -170,6 +186,9 @@ export default function ObsOverlayPage({
   const [solUsdPrice, setSolUsdPrice] = useState<number | null>(null);
   const [latestTip, setLatestTip] = useState<AlertItem | null>(null);
   const [stats, setStats] = useState({ totalTips: 0, totalVolumeSol: 0 });
+  const [activePoll, setActivePoll] = useState<CreatorPollState | null>(null);
+  const [qrReference, setQrReference] = useState<string>("");
+  const [overlayOrigin, setOverlayOrigin] = useState<string>("");
   const [isEditLayout, setIsEditLayout] = useState(false);
   const [isEditingGoalText, setIsEditingGoalText] = useState(false);
   const [goalDraft, setGoalDraft] = useState("");
@@ -195,28 +214,68 @@ export default function ObsOverlayPage({
   const layoutStorageKey = `solstream_overlay_layout_${username}`;
 
   useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("edit") === "1") {
-        setIsEditLayout(true);
+    const timer = setTimeout(() => {
+      setQrReference(Keypair.generate().publicKey.toBase58());
+      setOverlayOrigin(window.location.origin);
+      try {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get("edit") === "1") {
+          setIsEditLayout(true);
+        }
+        const forceQr = params.get("qr") === "1";
+        const raw = localStorage.getItem(layoutStorageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as Partial<OverlayLayout>;
+          setLayout({
+            alertPos: parsed.alertPos || { x: 0, y: 0 },
+            goalPos: parsed.goalPos || { x: 0, y: 0 },
+            supporterPos: parsed.supporterPos || { x: 0, y: 0 },
+            pollPos: parsed.pollPos || { x: 0, y: 0 },
+            qrPos: parsed.qrPos || { x: 0, y: 0 },
+            showQrWidget: forceQr || Boolean(parsed.showQrWidget),
+            customGoalTitle:
+              typeof parsed.customGoalTitle === "string"
+                ? parsed.customGoalTitle
+                : "",
+          });
+        } else if (forceQr) {
+          setLayout((prev) => ({ ...prev, showQrWidget: true }));
+        }
+      } catch {
+        // Ignore malformed localStorage layout
       }
-      const raw = localStorage.getItem(layoutStorageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Partial<OverlayLayout>;
-        setLayout({
-          alertPos: parsed.alertPos || { x: 0, y: 0 },
-          goalPos: parsed.goalPos || { x: 0, y: 0 },
-          supporterPos: parsed.supporterPos || { x: 0, y: 0 },
-          customGoalTitle:
-            typeof parsed.customGoalTitle === "string"
-              ? parsed.customGoalTitle
-              : "",
-        });
-      }
-    } catch {
-      // Ignore malformed localStorage layout
-    }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [layoutStorageKey]);
+
+  const refreshPollState = useCallback(() => {
+    fetch(`/api/polls/${encodeURIComponent(username)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && "poll" in d) setActivePoll(d.poll || null);
+      })
+      .catch(() => {});
+  }, [username]);
+
+  useEffect(() => {
+    if (!layout.showQrWidget || !qrReference) return;
+    const watchTimer = setInterval(() => {
+      fetch(
+        `/api/tips/watch?username=${encodeURIComponent(
+          username
+        )}&ref=${encodeURIComponent(qrReference)}`,
+        { cache: "no-store" }
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d?.matched) {
+            setQrReference(Keypair.generate().publicKey.toBase58());
+          }
+        })
+        .catch(() => {});
+    }, 3500);
+    return () => clearInterval(watchTimer);
+  }, [layout.showQrWidget, qrReference, username]);
 
   const persistLayout = useCallback(
     (next: OverlayLayout) => {
@@ -232,7 +291,7 @@ export default function ObsOverlayPage({
 
   const startWidgetDrag = useCallback(
     (
-      key: "alertPos" | "goalPos" | "supporterPos",
+      key: "alertPos" | "goalPos" | "supporterPos" | "pollPos" | "qrPos",
       e: React.MouseEvent<HTMLDivElement>
     ) => {
       if (!isEditLayout || e.button !== 0) return;
@@ -431,6 +490,9 @@ export default function ObsOverlayPage({
             totalVolumeSol: (Number(c.totalVolume) || 0) / 1_000_000_000,
           });
         }
+        if (data?.poll !== undefined) {
+          setActivePoll(data.poll || null);
+        }
         const initTips: any[] = data?.tips || [];
         initTips.forEach((t) => addToCappedSet(seenSigs.current, t.signature));
         if (initTips.length > 0) {
@@ -453,6 +515,7 @@ export default function ObsOverlayPage({
       try {
         const tip = JSON.parse(evt.data);
         enqueueIncomingTip(tip);
+        refreshPollState();
       } catch {}
     });
 
@@ -460,7 +523,7 @@ export default function ObsOverlayPage({
       es.close();
       setSseConnected(false);
     };
-  }, [username, enqueueIncomingTip, toAlertItem]);
+  }, [username, enqueueIncomingTip, toAlertItem, refreshPollState]);
 
   // 1b. Supabase Realtime WebSocket subscription (works across distributed servers / OBS)
   useEffect(() => {
@@ -511,12 +574,24 @@ export default function ObsOverlayPage({
           });
         }
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "creator_polls",
+          filter: `username=eq.${username}`,
+        },
+        () => {
+          refreshPollState();
+        }
+      )
       .subscribe();
 
     return () => {
       sb.removeChannel(channel);
     };
-  }, [username, enqueueIncomingTip]);
+  }, [username, enqueueIncomingTip, refreshPollState]);
 
   // 2. Local Instant Transport: BroadcastChannel + storage events for 0ms same-browser responsiveness
   useEffect(() => {
@@ -686,6 +761,21 @@ export default function ObsOverlayPage({
     : TIER_STYLES[3];
 
   const displayedGoalTitle = layout.customGoalTitle?.trim() || goal.title;
+  const solanaPayActionUrl =
+    overlayOrigin && qrReference
+      ? `${overlayOrigin}/api/actions/tip/${encodeURIComponent(
+          username
+        )}?ref=${encodeURIComponent(qrReference)}&source=obs-qr`
+      : "";
+  const solanaPayQrValue = solanaPayActionUrl
+    ? `solana:${encodeURIComponent(solanaPayActionUrl)}`
+    : "";
+  const displayAlertVote = displayAlert
+    ? classifyPollVote(displayAlert.message)
+    : null;
+  const displayAlertText = displayAlert
+    ? stripVoteTagForSpeech(displayAlert.message) || displayAlert.message
+    : "";
 
   return (
     <div className="relative w-screen h-screen bg-transparent overflow-hidden select-none flex flex-col justify-between p-4 sm:p-8 group">
@@ -710,6 +800,21 @@ export default function ObsOverlayPage({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              persistLayout({ ...layout, showQrWidget: !layout.showQrWidget })
+            }
+            className={`px-3.5 py-1.5 rounded-full font-bold text-[11px] shadow-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+              layout.showQrWidget
+                ? "bg-[#14F195] text-[#090A0F]"
+                : "bg-black/80 hover:bg-black text-zinc-200 border border-white/15"
+            }`}
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            <span>{layout.showQrWidget ? "Hide Scan QR" : "Show Scan QR"}</span>
+          </button>
+
           <button
             type="button"
             onClick={() => {
@@ -838,9 +943,16 @@ export default function ObsOverlayPage({
 
                 {/* Message Box + Animated Voice Waveform */}
                 <div className="flex items-center gap-4 bg-black/50 border border-white/10 rounded-2xl p-4">
-                  <p className="flex-1 text-base text-white font-medium leading-snug">
-                    &ldquo;{displayAlert.message}&rdquo;
-                  </p>
+                  <div className="flex-1 space-y-1">
+                    {displayAlertVote && (
+                      <span className="inline-block px-2 py-0.5 rounded-md bg-[#9945FF]/25 border border-[#9945FF]/50 text-[10px] font-bold uppercase tracking-wider text-white">
+                        Voted Option {displayAlertVote}
+                      </span>
+                    )}
+                    <p className="text-base text-white font-medium leading-snug">
+                      &ldquo;{displayAlertText}&rdquo;
+                    </p>
+                  </div>
 
                   <div className="flex flex-col items-end gap-1 flex-shrink-0">
                     <div className="flex items-end gap-1 h-6">
@@ -960,6 +1072,96 @@ export default function ObsOverlayPage({
             />
           </div>
         </div>
+
+        {/* Live Micro-Vote Poll Widget (Draggable) */}
+        {activePoll && activePoll.isActive && (() => {
+          const totalVotes = activePoll.votesA + activePoll.votesB;
+          const pctA = totalVotes > 0 ? Math.round((activePoll.votesA / totalVotes) * 100) : 50;
+          const pctB = totalVotes > 0 ? 100 - pctA : 50;
+          return (
+            <div
+              onMouseDown={(e) => startWidgetDrag("pollPos", e)}
+              onDoubleClick={() => setIsEditLayout(true)}
+              style={{
+                transform: `translate(${layout.pollPos.x}px, ${layout.pollPos.y}px)`,
+              }}
+              className={`w-full max-w-sm rounded-2xl bg-[#0F101A]/90 border border-[#9945FF]/35 p-3.5 backdrop-blur-md shadow-2xl space-y-2 ${
+                isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#9945FF]/80" : ""
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
+                <span className="inline-flex items-center gap-1.5 text-white truncate">
+                  <Vote className="w-3.5 h-3.5 text-[#9945FF] flex-shrink-0" />
+                  <span className="truncate">{activePoll.question}</span>
+                </span>
+                <span className="font-mono text-[#14F195] flex-shrink-0">
+                  {totalVotes} vote{totalVotes === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                <div className="space-y-1">
+                  <div className="flex justify-between text-zinc-200">
+                    <span className="truncate">A·{activePoll.optionA}</span>
+                    <span className="text-[#14F195]">{pctA}%</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-black/60 overflow-hidden">
+                    <div
+                      className="h-full bg-[#9945FF] transition-all duration-500"
+                      style={{ width: `${Math.max(pctA, 4)}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-zinc-200">
+                    <span className="truncate">B·{activePoll.optionB}</span>
+                    <span className="text-[#00F0FF]">{pctB}%</span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-black/60 overflow-hidden">
+                    <div
+                      className="h-full bg-[#14F195] transition-all duration-500"
+                      style={{ width: `${Math.max(pctB, 4)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Scannable Solana Pay Mobile QR HUD (Toggleable & Draggable) */}
+        {layout.showQrWidget && solanaPayQrValue && (
+          <div
+            onMouseDown={(e) => startWidgetDrag("qrPos", e)}
+            onDoubleClick={() => setIsEditLayout(true)}
+            style={{
+              transform: `translate(${layout.qrPos.x}px, ${layout.qrPos.y}px)`,
+            }}
+            className={`rounded-2xl bg-[#0F101A]/95 border border-[#14F195]/40 p-2.5 backdrop-blur-md shadow-2xl flex items-center gap-2.5 flex-shrink-0 ${
+              isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#14F195]/80" : ""
+            }`}
+          >
+            <div className="bg-white p-1.5 rounded-xl flex-shrink-0">
+              <QRCodeSVG
+                value={solanaPayQrValue}
+                size={76}
+                bgColor="#FFFFFF"
+                fgColor="#0B0C10"
+                level="L"
+              />
+            </div>
+            <div className="pr-1 space-y-0.5 max-w-[110px]">
+              <div className="text-[10px] font-black uppercase tracking-wider text-[#14F195]">
+                Scan to Tip
+              </div>
+              <div className="text-[11px] font-bold text-white truncate">
+                @{username}
+              </div>
+              <div className="text-[9px] text-zinc-400 leading-tight">
+                Solana Pay · 0% cut
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Real-Time Latest Tipper HUD (Only renders when real tips exist on-chain) */}
         {latestTip && (

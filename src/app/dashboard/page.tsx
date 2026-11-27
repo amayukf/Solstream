@@ -15,6 +15,7 @@ import {
 } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { getSupabaseClient } from "@/lib/supabaseClient";
+import type { CreatorPollState } from "@/lib/polls";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Copy,
@@ -26,6 +27,8 @@ import {
   Sparkles,
   QrCode,
   X,
+  Zap,
+  Vote,
 } from "lucide-react";
 
 const WalletMultiButton = dynamic(
@@ -41,7 +44,7 @@ const VOICES = [
 ];
 
 export default function CreatorDashboardPage() {
-  const { connected, publicKey } = useWallet();
+  const { connected, publicKey, signMessage } = useWallet();
   const {
     getCreatorPda,
     fetchCreatorAccount,
@@ -56,13 +59,21 @@ export default function CreatorDashboardPage() {
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [isCopied, setIsCopied] = useState(false);
   const [isBioCopied, setIsBioCopied] = useState(false);
+  const [isBlinkCopied, setIsBlinkCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
+  const [qrMode, setQrMode] = useState<"page" | "solanapay">("page");
   const [isUpdatingGoal, setIsUpdatingGoal] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [isHandleLocked, setIsHandleLocked] = useState<boolean | null>(null);
   const [isLockingHandle, setIsLockingHandle] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isCheckingAccount, setIsCheckingAccount] = useState(true);
+  const [activePoll, setActivePoll] = useState<CreatorPollState | null>(null);
+  const [pollQuestion, setPollQuestion] = useState("What should happen next on stream?");
+  const [pollOptionA, setPollOptionA] = useState("Next match");
+  const [pollOptionB, setPollOptionB] = useState("Music request");
+  const [pollMinSol, setPollMinSol] = useState("0.005");
+  const [isSavingPoll, setIsSavingPoll] = useState(false);
 
   // Goal & stats
   const [goalTitle, setGoalTitle] = useState("Mic upgrade");
@@ -117,6 +128,15 @@ export default function CreatorDashboardPage() {
           if (!map.has(t.signature)) map.set(t.signature, t);
         }
         merged = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
+        if (data?.poll) {
+          setActivePoll(data.poll);
+          setPollQuestion(data.poll.question);
+          setPollOptionA(data.poll.optionA);
+          setPollOptionB(data.poll.optionB);
+          setPollMinSol(
+            String(Math.max(0.001, (data.poll.minVoteLamports || 1_000_000) / 1_000_000_000))
+          );
+        }
       }
     } catch {
       // Offline / transient fallback to localStorage
@@ -324,11 +344,80 @@ export default function CreatorDashboardPage() {
     ? `https://solstream.app/overlay/${username}`
     : "";
 
+  const blinkActionUrl = typeof window !== "undefined" && username
+    ? `${window.location.origin}/api/actions/tip/${username}`
+    : username
+    ? `https://solstream.app/api/actions/tip/${username}`
+    : "";
+
+  const solanaPayBlinkQrValue = blinkActionUrl
+    ? `solana:${encodeURIComponent(blinkActionUrl)}`
+    : "";
+
   const handleCopyTipLink = () => {
     if (!tipPageUrl) return;
     navigator.clipboard.writeText(tipPageUrl);
     setIsBioCopied(true);
     setTimeout(() => setIsBioCopied(false), 2500);
+  };
+
+  const handleCopyBlink = () => {
+    if (!blinkActionUrl) return;
+    navigator.clipboard.writeText(blinkActionUrl);
+    setIsBlinkCopied(true);
+    setTimeout(() => setIsBlinkCopied(false), 2500);
+  };
+
+  const handleSavePoll = async (action: "upsert" | "close") => {
+    if (!connected || !publicKey || !username) return;
+    if (!signMessage) {
+      setStatusMessage("❌ Connected wallet does not support message signing.");
+      return;
+    }
+    setIsSavingPoll(true);
+    setStatusMessage(null);
+    try {
+      const timestampMs = Date.now();
+      const signedMessage = `solstream:poll:${username}:${timestampMs}:${action}`;
+      const sigBytes = await signMessage(new TextEncoder().encode(signedMessage));
+      let binary = "";
+      for (let i = 0; i < sigBytes.length; i++) {
+        binary += String.fromCharCode(sigBytes[i]);
+      }
+      const signature = btoa(binary);
+
+      const res = await fetch(`/api/polls/${encodeURIComponent(username)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          walletAddress: publicKey.toBase58(),
+          signedMessage,
+          signature,
+          timestampMs,
+          action,
+          question: pollQuestion,
+          optionA: pollOptionA,
+          optionB: pollOptionB,
+          minVoteSol: parseFloat(pollMinSol) || 0.005,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setStatusMessage(`❌ ${data?.error || "Failed to update poll."}`);
+        return;
+      }
+      setActivePoll(data?.poll || null);
+      setStatusMessage(
+        action === "close"
+          ? "✅ Live stream poll closed."
+          : "✅ Live Micro-Vote poll launched on your tip page & OBS overlay!"
+      );
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Poll signature cancelled";
+      setStatusMessage(`❌ ${msg}`);
+    } finally {
+      setIsSavingPoll(false);
+    }
   };
 
   const handleCopyOverlay = () => {
@@ -691,6 +780,24 @@ export default function CreatorDashboardPage() {
                     </button>
                     <button
                       type="button"
+                      onClick={handleCopyBlink}
+                      className="px-3 py-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-200 hover:text-[#14F195] text-xs font-bold border border-white/10 transition-colors flex items-center gap-1.5 flex-shrink-0"
+                      title="Copy Solana Blink Action URL"
+                    >
+                      {isBlinkCopied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-[#14F195]" />
+                          <span>Blink Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Zap className="w-3.5 h-3.5 text-[#14F195]" />
+                          <span>Blink</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setShowQrModal(true)}
                       className="p-2.5 rounded-xl bg-black/40 hover:bg-black/60 text-zinc-300 hover:text-[#14F195] transition-colors flex-shrink-0 border border-white/10"
                       title="Show scannable tip QR code"
@@ -883,6 +990,105 @@ export default function CreatorDashboardPage() {
                     })}
                   </div>
                 </div>
+
+                {/* Live Micro-Vote Poll Manager */}
+                <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 sm:p-6 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Vote className="w-4 h-4 text-[#9945FF]" />
+                      <h2 className="text-sm font-bold text-white">Live Micro-Vote Poll</h2>
+                    </div>
+                    <span
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                        activePoll?.isActive
+                          ? "bg-[#14F195]/10 text-[#14F195] border-[#14F195]/30"
+                          : "bg-white/5 text-zinc-400 border-white/10"
+                      }`}
+                    >
+                      {activePoll?.isActive ? "LIVE ON STREAM" : "INACTIVE"}
+                    </span>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <input
+                      type="text"
+                      value={pollQuestion}
+                      onChange={(e) => setPollQuestion(e.target.value)}
+                      maxLength={80}
+                      placeholder="Poll question (e.g., Next game?)"
+                      className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#9945FF]"
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <input
+                        type="text"
+                        value={pollOptionA}
+                        onChange={(e) => setPollOptionA(e.target.value)}
+                        maxLength={32}
+                        placeholder="Option A"
+                        className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#9945FF]"
+                      />
+                      <input
+                        type="text"
+                        value={pollOptionB}
+                        onChange={(e) => setPollOptionB(e.target.value)}
+                        maxLength={32}
+                        placeholder="Option B"
+                        className="w-full bg-[#090A0F] border border-white/10 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#14F195]"
+                      />
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-zinc-400">Min vote:</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          min="0.001"
+                          value={pollMinSol}
+                          onChange={(e) => setPollMinSol(e.target.value)}
+                          className="w-20 bg-[#090A0F] border border-white/10 rounded-xl px-2.5 py-1.5 text-xs font-mono text-white focus:outline-none focus:border-[#9945FF]"
+                        />
+                        <span className="text-[11px] font-mono text-zinc-500">SOL</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {activePoll?.isActive && (
+                          <button
+                            type="button"
+                            disabled={isSavingPoll || !connected || !isInitialized}
+                            onClick={() => handleSavePoll("close")}
+                            className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-zinc-200 disabled:opacity-50"
+                          >
+                            End Poll
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          disabled={isSavingPoll || !connected || !isInitialized}
+                          onClick={() => handleSavePoll("upsert")}
+                          className="px-4 py-2 rounded-xl bg-[#9945FF] hover:bg-[#8A37FF] text-white text-xs font-bold disabled:opacity-50"
+                        >
+                          {isSavingPoll
+                            ? "Signing..."
+                            : activePoll?.isActive
+                            ? "Restart Poll"
+                            : "Launch Poll"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {activePoll && (
+                    <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] font-mono text-zinc-300">
+                      <span>
+                        A ({activePoll.optionA}):{" "}
+                        <strong className="text-[#14F195]">{activePoll.votesA}</strong> votes
+                      </span>
+                      <span>
+                        B ({activePoll.optionB}):{" "}
+                        <strong className="text-[#00F0FF]">{activePoll.votesB}</strong> votes
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Right Column: Live Tip Ledger (6 cols) */}
@@ -978,13 +1184,38 @@ export default function CreatorDashboardPage() {
                 Scan to Tip @{username}
               </div>
               <p className="text-xs text-zinc-400">
-                Put this QR on your stream corner or share with mobile viewers.
+                Put this QR on your stream corner or let fans scan with a Solana mobile wallet.
               </p>
+            </div>
+
+            <div className="inline-flex rounded-xl bg-[#090A0F] border border-white/10 p-1 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setQrMode("page")}
+                className={`px-3 py-1 rounded-lg transition-colors ${
+                  qrMode === "page"
+                    ? "bg-[#14F195] text-[#090A0F]"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                Tip Page
+              </button>
+              <button
+                type="button"
+                onClick={() => setQrMode("solanapay")}
+                className={`px-3 py-1 rounded-lg transition-colors ${
+                  qrMode === "solanapay"
+                    ? "bg-[#9945FF] text-white"
+                    : "text-zinc-400 hover:text-white"
+                }`}
+              >
+                Solana Pay Blink
+              </button>
             </div>
 
             <div className="bg-white p-4 rounded-2xl inline-block mx-auto shadow-lg">
               <QRCodeSVG
-                value={tipPageUrl}
+                value={qrMode === "solanapay" ? solanaPayBlinkQrValue : tipPageUrl}
                 size={196}
                 bgColor="#FFFFFF"
                 fgColor="#0B0C10"
@@ -993,15 +1224,21 @@ export default function CreatorDashboardPage() {
             </div>
 
             <div className="text-[11px] font-mono text-zinc-300 bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2 truncate">
-              {tipPageUrl}
+              {qrMode === "solanapay" ? blinkActionUrl : tipPageUrl}
             </div>
 
             <button
               type="button"
-              onClick={handleCopyTipLink}
+              onClick={qrMode === "solanapay" ? handleCopyBlink : handleCopyTipLink}
               className="w-full py-3 rounded-xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs transition-colors"
             >
-              {isBioCopied ? "Copied Link!" : "Copy Tip Link"}
+              {qrMode === "solanapay"
+                ? isBlinkCopied
+                  ? "Copied Blink URL!"
+                  : "Copy Blink Action URL"
+                : isBioCopied
+                ? "Copied Link!"
+                : "Copy Tip Link"}
             </button>
           </div>
         </div>

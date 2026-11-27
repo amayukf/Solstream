@@ -7,7 +7,9 @@ import {
 import {
   getCreatorFromDb,
   getTipsFromDb,
+  getPollWithResultsFromDb,
   normalizeAudioUrl,
+  type CreatorPollState,
 } from "@/lib/supabaseDb";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
@@ -111,12 +113,20 @@ export async function GET(
           );
         }
 
+        let poll: CreatorPollState | null = null;
+        try {
+          poll = await getPollWithResultsFromDb(username);
+        } catch {
+          poll = null;
+        }
+
         send("init", {
           creator,
           tips: tips.map((t) => sanitizeTipForSse(t, true)),
+          poll,
         });
       } catch {
-        send("init", { creator: null, tips: [] });
+        send("init", { creator: null, tips: [], poll: null });
       }
     },
     cancel() {

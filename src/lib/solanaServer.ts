@@ -1,4 +1,9 @@
-import { PublicKey, SystemProgram } from "@solana/web3.js";
+import {
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from "@solana/web3.js";
 import bs58 from "bs58";
 import { PROGRAM_ID, DEVNET_RPC_URL, MIN_TIP_LAMPORTS } from "@/lib/constants";
 
@@ -799,4 +804,101 @@ function mergeTips(a: OnChainTip[], b: OnChainTip[]): OnChainTip[] {
     if (!map.has(t.signature)) map.set(t.signature, t);
   }
   return Array.from(map.values()).sort((x, y) => y.timestamp - x.timestamp);
+}
+
+function encodeAnchorString(value: string): Buffer {
+  const utf8 = Buffer.from(value, "utf8");
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(utf8.length, 0);
+  return Buffer.concat([len, utf8]);
+}
+
+/**
+ * Builds an unsigned base64 legacy Solana transaction calling Solstream's `send_tip`
+ * instruction (plus an optional read-only `reference` account for Solana Pay tracking).
+ */
+export async function buildSerializedSendTipTransaction(params: {
+  donorAddress: string;
+  creatorAuthority: string;
+  creatorPda: string;
+  amountLamports: number;
+  tier: number;
+  displayName: string;
+  message: string;
+  referenceKey?: string;
+}): Promise<string> {
+  const donorPk = new PublicKey(params.donorAddress);
+  const authorityPk = new PublicKey(params.creatorAuthority);
+  const creatorPdaPk = new PublicKey(params.creatorPda);
+
+  const disc = Buffer.from(SEND_TIP_DISC);
+  const amountBuf = Buffer.alloc(8);
+  amountBuf.writeBigUInt64LE(BigInt(params.amountLamports), 0);
+  const tierBuf = Buffer.from([params.tier]);
+
+  const data = Buffer.concat([
+    disc,
+    amountBuf,
+    tierBuf,
+    encodeAnchorString(params.displayName),
+    encodeAnchorString(params.message),
+  ]);
+
+  const keys = [
+    { pubkey: donorPk, isSigner: true, isWritable: true },
+    { pubkey: creatorPdaPk, isSigner: false, isWritable: true },
+    { pubkey: authorityPk, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+  ];
+
+  if (params.referenceKey) {
+    keys.push({
+      pubkey: new PublicKey(params.referenceKey),
+      isSigner: false,
+      isWritable: false,
+    });
+  }
+
+  const ix = new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys,
+    data,
+  });
+
+  const latest = await rpcCall("getLatestBlockhash", [{ commitment: "confirmed" }]);
+  const blockhash = latest?.value?.blockhash;
+  if (!blockhash) {
+    throw new Error("Failed to fetch recent Devnet blockhash");
+  }
+
+  const tx = new Transaction({
+    feePayer: donorPk,
+    recentBlockhash: blockhash,
+  }).add(ix);
+
+  return tx
+    .serialize({ requireAllSignatures: false, verifySignatures: false })
+    .toString("base64");
+}
+
+/**
+ * Fetches recent confirmed signatures touching a Solana Pay reference key.
+ */
+export async function fetchConfirmedSignaturesForReference(
+  referenceKey: string
+): Promise<string[]> {
+  try {
+    const pk = new PublicKey(referenceKey).toBase58();
+    const batch = await rpcCall(
+      "getSignaturesForAddress",
+      [pk, { limit: 3, commitment: "confirmed" }],
+      0
+    );
+    if (!Array.isArray(batch)) return [];
+    return batch
+      .filter((e: any) => typeof e?.signature === "string" && e.err === null)
+      .map((e: any) => e.signature as string);
+  } catch {
+    return [];
+  }
 }

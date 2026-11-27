@@ -2,6 +2,13 @@ import fs from "fs";
 import { Pool } from "pg";
 import { createClient } from "@supabase/supabase-js";
 import type { OnChainCreator, OnChainTip } from "@/lib/solanaServer";
+import {
+  classifyPollVote,
+  stripVoteTagForSpeech,
+  type CreatorPollState,
+} from "@/lib/polls";
+
+export { classifyPollVote, stripVoteTagForSpeech, type CreatorPollState };
 
 const globalForPg = globalThis as unknown as {
   __solstreamPgPool?: Pool;
@@ -420,4 +427,123 @@ export async function insertTipInDb(
     inserted,
     row: res.rows[0] ? { ...tip } : null,
   };
+}
+
+export async function getPollWithResultsFromDb(
+  username: string
+): Promise<CreatorPollState | null> {
+  const pool = getPool();
+  if (!pool) return null;
+
+  try {
+    const clean = username.trim().toLowerCase();
+    const pollRes = await pool.query(
+      `SELECT * FROM public.creator_polls WHERE username = $1 LIMIT 1`,
+      [clean]
+    );
+    const row = pollRes.rows[0];
+    if (!row) return null;
+
+    const tipsRes = await pool.query(
+      `
+      SELECT message, amount_lamports
+      FROM public.tips
+      WHERE username = $1 AND created_at >= $2
+      ORDER BY created_at DESC
+      LIMIT 500
+      `,
+      [clean, row.started_at]
+    );
+
+    let votesA = 0;
+    let votesB = 0;
+    let lamportsA = 0;
+    let lamportsB = 0;
+    const minLamports = Number(row.min_vote_lamports) || 1_000_000;
+
+    for (const t of tipsRes.rows) {
+      const amt = Number(t.amount_lamports) || 0;
+      if (amt < minLamports) continue;
+      const choice = classifyPollVote(t.message);
+      if (choice === "A") {
+        votesA += 1;
+        lamportsA += amt;
+      } else if (choice === "B") {
+        votesB += 1;
+        lamportsB += amt;
+      }
+    }
+
+    return {
+      username: String(row.username),
+      question: String(row.question),
+      optionA: String(row.option_a),
+      optionB: String(row.option_b),
+      minVoteLamports: minLamports,
+      isActive: Boolean(row.is_active),
+      startedAt: new Date(row.started_at).getTime(),
+      votesA,
+      votesB,
+      lamportsA,
+      lamportsB,
+    };
+  } catch (err: unknown) {
+    if (
+      err &&
+      typeof err === "object" &&
+      "code" in err &&
+      (err as { code?: string }).code === "42P01"
+    ) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+export async function upsertCreatorPollInDb(params: {
+  creatorId: string;
+  username: string;
+  question: string;
+  optionA: string;
+  optionB: string;
+  minVoteLamports: number;
+  isActive: boolean;
+  resetCounts?: boolean;
+}): Promise<CreatorPollState | null> {
+  const pool = getPool();
+  if (!pool) return null;
+
+  const clean = params.username.trim().toLowerCase();
+  const shouldReset = params.resetCounts !== false;
+
+  await pool.query(
+    `
+    INSERT INTO public.creator_polls (
+      creator_id, username, question, option_a, option_b,
+      min_vote_lamports, is_active, started_at, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
+    ON CONFLICT (username) DO UPDATE SET
+      creator_id = EXCLUDED.creator_id,
+      question = EXCLUDED.question,
+      option_a = EXCLUDED.option_a,
+      option_b = EXCLUDED.option_b,
+      min_vote_lamports = EXCLUDED.min_vote_lamports,
+      is_active = EXCLUDED.is_active,
+      started_at = CASE WHEN $8 THEN now() ELSE public.creator_polls.started_at END,
+      updated_at = now()
+    `,
+    [
+      params.creatorId,
+      clean,
+      params.question,
+      params.optionA,
+      params.optionB,
+      params.minVoteLamports,
+      params.isActive,
+      shouldReset,
+    ]
+  );
+
+  return getPollWithResultsFromDb(clean);
 }

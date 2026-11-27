@@ -37,6 +37,9 @@ function ClaimHandleForm() {
   const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
   const [goalTitle, setGoalTitle] = useState("Mic upgrade");
   const [goalTarget, setGoalTarget] = useState("3.0");
+  const [importUrl, setImportUrl] = useState("");
+  const [isImportingProfile, setIsImportingProfile] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -222,6 +225,38 @@ function ClaimHandleForm() {
     }
     checkExisting();
   }, [publicKey, getCreatorPda, fetchCreatorAccount]);
+
+  const handleImportChannel = async () => {
+    const targetUrl = importUrl.trim();
+    if (!targetUrl) return;
+    setIsImportingProfile(true);
+    setImportStatus(null);
+    try {
+      const res = await fetch("/api/creators/import-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: targetUrl }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setImportStatus(data?.error || "Could not import channel details.");
+        return;
+      }
+      if (data?.suggestedHandle && !existingOnChainHandle) {
+        setHandle(String(data.suggestedHandle));
+      }
+      if (data?.suggestedGoal) {
+        setGoalTitle(String(data.suggestedGoal));
+      }
+      setImportStatus(
+        `Imported from ${data?.title || targetUrl} via Firecrawl.`
+      );
+    } catch {
+      setImportStatus("Failed to reach channel importer.");
+    } finally {
+      setIsImportingProfile(false);
+    }
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -420,6 +455,34 @@ function ClaimHandleForm() {
           onSubmit={handleCreate}
           className="rounded-3xl bg-[#13141F] border border-white/10 p-7 md:p-9 space-y-6 shadow-2xl"
         >
+          {/* Optional Firecrawl Channel Auto-Fill */}
+          <div className="rounded-2xl bg-[#090A0F] border border-white/10 p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-[11px] font-bold text-zinc-300">
+              <span>Quick-fill from channel URL (Firecrawl)</span>
+              <span className="text-[10px] font-mono text-zinc-500">Optional</span>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="url"
+                value={importUrl}
+                onChange={(e) => setImportUrl(e.target.value)}
+                placeholder="https://twitch.tv/yourchannel or youtube.com/@handle"
+                className="flex-1 bg-[#13141F] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#14F195]"
+              />
+              <button
+                type="button"
+                onClick={handleImportChannel}
+                disabled={isImportingProfile || !importUrl.trim()}
+                className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white transition-colors disabled:opacity-50"
+              >
+                {isImportingProfile ? "Importing..." : "Auto-fill"}
+              </button>
+            </div>
+            {importStatus && (
+              <p className="text-[11px] text-[#14F195]">{importStatus}</p>
+            )}
+          </div>
+
           {/* Handle Field */}
           <div>
             <label className="block text-xs font-bold text-zinc-300 mb-2">
