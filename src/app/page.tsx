@@ -177,14 +177,12 @@ export default function HomePage() {
             <a href="#how-it-works" className="hover:text-white transition-colors">
               How it works
             </a>
-            {(myCreator || ownedActiveHandle) && (
-              <Link
-                href="/dashboard"
-                className="hover:text-white transition-colors"
-              >
-                Dashboard
-              </Link>
-            )}
+            <Link
+              href="/dashboard"
+              className="hover:text-[#14F195] transition-colors font-medium"
+            >
+              Creator Studio
+            </Link>
           </nav>
         </div>
 
@@ -214,13 +212,13 @@ export default function HomePage() {
             </a>
           )}
 
-          {myCreator ? (
+          {myCreator || ownedActiveHandle ? (
             <Link
               href="/dashboard"
               className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14F195]/15 hover:bg-[#14F195]/25 text-[#14F195] border border-[#14F195]/30 font-bold text-xs transition-colors"
             >
               <LayoutDashboard className="w-3.5 h-3.5" />
-              <span>Studio (@{myCreator.username})</span>
+              <span>Studio (@{myCreator?.username || ownedActiveHandle})</span>
             </Link>
           ) : (
             <Link
@@ -238,15 +236,18 @@ export default function HomePage() {
 
       {/* Mobile Quick Navigation Bar */}
       <nav className="relative z-40 max-w-7xl mx-auto px-4 pb-3 flex md:hidden items-center gap-2 overflow-x-auto">
-        {myCreator ? (
-          <Link
-            href="/dashboard"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14F195]/15 text-[#14F195] border border-[#14F195]/30 font-bold text-xs whitespace-nowrap flex-shrink-0"
-          >
-            <LayoutDashboard className="w-3.5 h-3.5" />
-            <span>Studio</span>
-          </Link>
-        ) : (
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#14F195]/15 text-[#14F195] border border-[#14F195]/30 font-bold text-xs whitespace-nowrap flex-shrink-0"
+        >
+          <LayoutDashboard className="w-3.5 h-3.5" />
+          <span>
+            {myCreator || ownedActiveHandle
+              ? `Studio (@${myCreator?.username || ownedActiveHandle})`
+              : "Creator Studio"}
+          </span>
+        </Link>
+        {!(myCreator || ownedActiveHandle) && (
           <Link
             href="/claim"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#9945FF]/20 text-white border border-[#9945FF]/40 font-bold text-xs whitespace-nowrap flex-shrink-0"
@@ -333,28 +334,39 @@ export default function HomePage() {
 
             {/* Direct Action Buttons: Clear Creator vs. Fan Paths */}
             <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-3 pt-1">
-              {myCreator ? (
+              {myCreator || ownedActiveHandle ? (
                 <Link
                   href="/dashboard"
                   className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
                 >
                   <LayoutDashboard className="w-4 h-4" />
-                  <span>Open Creator Studio (@{myCreator.username})</span>
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              ) : (
-                <Link
-                  href="/claim"
-                  className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
-                >
-                  <UserPlus className="w-4 h-4" />
                   <span>
-                    {connected
-                      ? "Create Your Creator Profile"
-                      : "Claim Username as Creator"}
+                    Open Creator Studio (@{myCreator?.username || ownedActiveHandle})
                   </span>
                   <ArrowRight className="w-4 h-4" />
                 </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/claim"
+                    className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-6 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-xs sm:text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    <span>
+                      {connected
+                        ? "Create Your Creator Profile"
+                        : "Claim Username as Creator"}
+                    </span>
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                  <Link
+                    href="/dashboard"
+                    className="w-full sm:w-auto justify-center inline-flex items-center gap-2 px-5 py-3.5 rounded-2xl bg-[#13141F] hover:bg-[#1A1C2C] text-[#14F195] border border-[#14F195]/30 font-bold text-xs sm:text-sm transition-all"
+                  >
+                    <LayoutDashboard className="w-4 h-4" />
+                    <span>Creator Studio</span>
+                  </Link>
+                </>
               )}
 
               <a

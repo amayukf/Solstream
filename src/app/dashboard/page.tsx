@@ -730,8 +730,32 @@ export default function CreatorDashboardPage() {
           </div>
         )}
 
-        {/* If user hasn't claimed a handle yet */}
-        {!isCheckingAccount && !username && (
+        {/* If user hasn't connected a wallet yet and has no cached handle */}
+        {!isCheckingAccount && !connected && !username && (
+          <div className="p-8 rounded-3xl bg-[#13141F] border border-white/10 text-center space-y-4 max-w-2xl mx-auto shadow-2xl">
+            <div className="w-14 h-14 rounded-2xl bg-[#14F195]/10 text-[#14F195] flex items-center justify-center mx-auto border border-[#14F195]/20">
+              <Sparkles className="w-7 h-7" />
+            </div>
+            <h2 className="text-2xl font-black text-white">
+              Connect Your Creator Wallet
+            </h2>
+            <p className="text-sm text-zinc-400 max-w-md mx-auto leading-relaxed">
+              Already claimed a SolStream handle? Connect the Solana wallet you used to claim it and we will load your Creator Studio automatically.
+            </p>
+            <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+              <WalletMultiButton className="!bg-[#14F195] hover:!bg-[#12DB87] !text-[#090A0F] !font-black !text-sm !rounded-2xl !h-12 !px-6" />
+              <Link
+                href="/claim"
+                className="px-5 py-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-bold text-zinc-300 transition-colors"
+              >
+                New creator? Claim handle
+              </Link>
+            </div>
+          </div>
+        )}
+
+        {/* If wallet is connected but hasn't claimed a handle yet */}
+        {!isCheckingAccount && connected && !username && (
           <div className="p-8 rounded-3xl bg-[#13141F] border border-white/10 text-center space-y-4 max-w-2xl mx-auto shadow-2xl">
             <div className="w-14 h-14 rounded-2xl bg-[#9945FF]/10 text-[#9945FF] flex items-center justify-center mx-auto border border-[#9945FF]/20">
               <Sparkles className="w-7 h-7" />
