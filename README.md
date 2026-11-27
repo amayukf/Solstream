@@ -3,6 +3,9 @@
 **Non-Custodial Web3 Live-Streaming Monetization on Solana Devnet**  
 *Built for the DEV3PACK Solana Hackathon*
 
+- **Live App:** [https://solstream-six.vercel.app](https://solstream-six.vercel.app)
+- **Devnet Program ID:** [`BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`](https://solscan.io/account/BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA?cluster=devnet)
+
 ---
 
 ## 🎯 Problem & Solution
