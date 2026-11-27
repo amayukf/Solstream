@@ -95,12 +95,18 @@ const SOLANA_ECOSYSTEM_META: CoinMeta[] = [
   },
 ];
 
-// Simple in-memory server cache (25s TTL) to avoid hitting public rate limits
+// Simple in-memory server cache (25s TTL) + inflight deduplication to avoid hitting public rate limits
 let cachedPayload: {
   coins: CoinMarketItem[];
   updatedAt: number;
   source: "coingecko" | "binance";
 } | null = null;
+
+let inflightPrices: Promise<{
+  coins: CoinMarketItem[];
+  updatedAt: number;
+  source: "coingecko" | "binance";
+}> | null = null;
 
 const CACHE_TTL_MS = 25_000;
 
@@ -206,32 +212,41 @@ export async function GET(req: Request) {
   }
 
   try {
-    const coins = await fetchFromCoinGecko();
-    cachedPayload = {
-      coins,
-      updatedAt: Date.now(),
-      source: "coingecko",
-    };
-    return NextResponse.json(cachedPayload);
-  } catch (cgErr) {
-    console.warn("CoinGecko prices lookup failed, trying Binance:", cgErr);
-    try {
-      const coins = await fetchFromBinance();
-      cachedPayload = {
-        coins,
-        updatedAt: Date.now(),
-        source: "binance",
-      };
-      return NextResponse.json(cachedPayload);
-    } catch (binErr) {
-      console.error("GET /api/prices upstream failure:", binErr);
-      if (cachedPayload) {
-        return NextResponse.json(cachedPayload);
-      }
-      return NextResponse.json(
-        { error: "Unable to fetch live market prices right now." },
-        { status: 503 }
-      );
+    if (!inflightPrices) {
+      inflightPrices = (async () => {
+        try {
+          const coins = await fetchFromCoinGecko();
+          cachedPayload = {
+            coins,
+            updatedAt: Date.now(),
+            source: "coingecko",
+          };
+          return cachedPayload;
+        } catch (cgErr) {
+          console.warn("CoinGecko prices lookup failed, trying Binance:", cgErr);
+          const coins = await fetchFromBinance();
+          cachedPayload = {
+            coins,
+            updatedAt: Date.now(),
+            source: "binance",
+          };
+          return cachedPayload;
+        }
+      })().finally(() => {
+        inflightPrices = null;
+      });
     }
+
+    const result = await inflightPrices;
+    return NextResponse.json(result);
+  } catch (err) {
+    console.error("GET /api/prices upstream failure:", err);
+    if (cachedPayload) {
+      return NextResponse.json(cachedPayload);
+    }
+    return NextResponse.json(
+      { error: "Unable to fetch live market prices right now." },
+      { status: 503 }
+    );
   }
 }

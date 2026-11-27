@@ -4,7 +4,6 @@ import {
   fetchOnChainCreatorByUsername,
   isSignatureProcessed,
   markSignatureProcessed,
-  inflightVerify,
   type OnChainTip,
 } from "@/lib/solanaServer";
 import {
@@ -16,10 +15,11 @@ import {
   ensureDbReady,
   stripVoteTagForSpeech,
 } from "@/lib/supabaseDb";
+import { isReservedHandle } from "@/lib/constants";
 
 const DEFAULT_VOICE_ID = "pNInz6obpgDQGcFmaJgB"; // Adam
 
-function sanitizeForTts(text: string): string {
+export function sanitizeForTts(text: string): string {
   const blocked = /\b(nigger|faggot|kike|chink|tranny)\b/gi;
   return stripVoteTagForSpeech(text).replace(blocked, "***").trim();
 }
@@ -85,20 +85,50 @@ export type VerifyTipResult =
       body: { error: string };
     };
 
-/**
- * Shared fail-closed verification, authority cross-check, ElevenLabs TTS,
- * Supabase persistence, and OBS SSE broadcast pipeline.
- */
-export async function verifyAndProcessTip(
-  signature: string,
-  rawUsername: string
-): Promise<VerifyTipResult> {
-  const username = rawUsername.trim().toLowerCase();
-  if (!signature || !username) {
-    return { status: 400, body: { error: "Missing signature or username" } };
-  }
+export interface TipProcessorDeps {
+  ensureDbReady: typeof ensureDbReady;
+  getCreatorFromDb: typeof getCreatorFromDb;
+  fetchOnChainCreatorByUsername: typeof fetchOnChainCreatorByUsername;
+  upsertCreatorInDb: typeof upsertCreatorInDb;
+  fetchVerifiedTransactionTip: typeof fetchVerifiedTransactionTip;
+  hasTipSignatureInDb: typeof hasTipSignatureInDb;
+  insertTipInDb: typeof insertTipInDb;
+  uploadAlertAudioToStorage: typeof uploadAlertAudioToStorage;
+  generateTtsBuffer: (voiceId: string, text: string) => Promise<Buffer | null>;
+  isSignatureProcessed: typeof isSignatureProcessed;
+  markSignatureProcessed: typeof markSignatureProcessed;
+  pushVerifiedTipToMemory: typeof pushVerifiedTipToMemory;
+}
 
-  const dbReady = await ensureDbReady();
+const DEFAULT_DEPS: TipProcessorDeps = {
+  ensureDbReady,
+  getCreatorFromDb,
+  fetchOnChainCreatorByUsername,
+  upsertCreatorInDb,
+  fetchVerifiedTransactionTip,
+  hasTipSignatureInDb,
+  insertTipInDb,
+  uploadAlertAudioToStorage,
+  generateTtsBuffer: generateElevenLabsAudioBuffer,
+  isSignatureProcessed,
+  markSignatureProcessed,
+  pushVerifiedTipToMemory,
+};
+
+const globalForVerify = globalThis as unknown as {
+  __solstreamInflightVerifyResults?: Map<string, Promise<VerifyTipResult>>;
+};
+
+const inflightVerifyResults =
+  globalForVerify.__solstreamInflightVerifyResults ??
+  (globalForVerify.__solstreamInflightVerifyResults = new Map());
+
+async function runVerifyPipeline(
+  signature: string,
+  username: string,
+  deps: TipProcessorDeps
+): Promise<VerifyTipResult> {
+  const dbReady = await deps.ensureDbReady();
   if (!dbReady) {
     return {
       status: 503,
@@ -106,10 +136,10 @@ export async function verifyAndProcessTip(
     };
   }
 
-  let dbCreator = await getCreatorFromDb(username);
+  let dbCreator = await deps.getCreatorFromDb(username);
   let chainCreator = null;
   try {
-    chainCreator = await fetchOnChainCreatorByUsername(username);
+    chainCreator = await deps.fetchOnChainCreatorByUsername(username);
   } catch (err) {
     console.error("Tip verify chain creator lookup failed:", err);
     return {
@@ -119,7 +149,7 @@ export async function verifyAndProcessTip(
   }
 
   if (!dbCreator && chainCreator) {
-    dbCreator = await upsertCreatorInDb(chainCreator);
+    dbCreator = await deps.upsertCreatorInDb(chainCreator);
   }
 
   if (!dbCreator && !chainCreator) {
@@ -151,108 +181,137 @@ export async function verifyAndProcessTip(
 
   const resolvedCreator = { ...dbCreator, ...chainCreator };
 
-  const tip = await fetchVerifiedTransactionTip(
-    signature,
-    resolvedCreator.authority
-  );
+  let tip: OnChainTip | null = null;
+  try {
+    tip = await deps.fetchVerifiedTransactionTip(
+      signature,
+      resolvedCreator.authority
+    );
+  } catch (err) {
+    console.error("Tip verify RPC getTransaction failed:", err);
+    return {
+      status: 503,
+      body: { error: "Service temporarily unavailable" },
+    };
+  }
+
   if (!tip) {
     return {
       status: 400,
       body: {
-        error: "Transaction is invalid, unconfirmed, or not a matching Solstream tip",
+        error:
+          "Transaction is invalid, unconfirmed, or not a matching Solstream tip",
       },
     };
   }
 
-  const pending = inflightVerify.get(signature);
-  if (pending) {
-    await pending.catch(() => null);
-    return {
-      status: 200,
-      body: { verified: true, alreadyProcessed: true },
-    };
-  }
-
-  const alreadyInMemory = isSignatureProcessed(signature);
-  const alreadyInDb = alreadyInMemory ? true : await hasTipSignatureInDb(signature);
+  const alreadyInMemory = deps.isSignatureProcessed(signature);
+  const alreadyInDb = alreadyInMemory
+    ? true
+    : await deps.hasTipSignatureInDb(signature);
   if (alreadyInMemory || alreadyInDb) {
-    markSignatureProcessed(signature);
+    deps.markSignatureProcessed(signature);
     return {
       status: 200,
       body: { verified: true, alreadyProcessed: true },
     };
   }
 
-  const processTask = (async () => {
-    const solAmount = (tip.amountLamports / 1_000_000_000).toFixed(3);
-    const cleanMsg = sanitizeForTts(tip.message || "");
-    const speechScript = cleanMsg
-      ? `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`
-      : `${tip.displayName || "A fan"} tipped ${solAmount} SOL.`;
+  const solAmount = (tip.amountLamports / 1_000_000_000).toFixed(3);
+  const cleanMsg = sanitizeForTts(tip.message || "");
+  const speechScript = cleanMsg
+    ? `${tip.displayName || "A fan"} tipped ${solAmount} SOL. ${cleanMsg}`
+    : `${tip.displayName || "A fan"} tipped ${solAmount} SOL.`;
 
-    const voiceId = resolvedCreator.voiceId || DEFAULT_VOICE_ID;
-    const audioBuffer = await generateElevenLabsAudioBuffer(
-      voiceId,
-      speechScript
-    );
-    const audioUrl = audioBuffer
-      ? await uploadAlertAudioToStorage(username, signature, audioBuffer)
-      : null;
+  const voiceId = resolvedCreator.voiceId || DEFAULT_VOICE_ID;
+  const audioBuffer = await deps.generateTtsBuffer(voiceId, speechScript);
+  const audioUrl = audioBuffer
+    ? await deps.uploadAlertAudioToStorage(username, signature, audioBuffer)
+    : null;
 
-    const ttsEngine = audioUrl ? "elevenlabs" : "browser-speech";
+  const ttsEngine = audioUrl ? "elevenlabs" : "browser-speech";
+  const verifiedTip: OnChainTip = { ...tip, audioUrl };
 
-    const verifiedTip = {
-      ...tip,
-      audioUrl,
-    };
+  const dbResult = dbCreator.id
+    ? await deps.insertTipInDb(dbCreator.id, username, verifiedTip, ttsEngine)
+    : { inserted: false, row: null };
 
-    const dbResult = dbCreator?.id
-      ? await insertTipInDb(dbCreator.id, username, verifiedTip, ttsEngine)
-      : { inserted: false, row: null };
+  const savedToSupabase = dbResult.inserted;
 
-    const savedToSupabase = dbResult.inserted;
-
-    if (dbResult.inserted) {
-      markSignatureProcessed(signature);
-      pushVerifiedTipToMemory(username, verifiedTip);
-      return {
+  if (dbResult.inserted) {
+    deps.markSignatureProcessed(signature);
+    deps.pushVerifiedTipToMemory(username, verifiedTip);
+    return {
+      status: 200,
+      body: {
         verified: true,
         savedToSupabase,
         ttsEngine,
         tip: verifiedTip,
-      };
-    }
+      },
+    };
+  }
 
-    if (await hasTipSignatureInDb(signature)) {
-      markSignatureProcessed(signature);
-      return {
-        verified: true,
-        alreadyProcessed: true,
-      };
-    }
-
+  if (await deps.hasTipSignatureInDb(signature)) {
+    deps.markSignatureProcessed(signature);
     return {
+      status: 200,
+      body: { verified: true, alreadyProcessed: true },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
       verified: true,
       savedToSupabase,
       ttsEngine,
       tip: verifiedTip,
-    };
-  })();
+    },
+  };
+}
 
-  inflightVerify.set(signature, processTask);
-  try {
-    const result = await processTask;
-    return {
-      status: 200,
-      body: result as {
-        verified: true;
-        alreadyProcessed?: boolean;
-        savedToSupabase?: boolean;
-        ttsEngine?: string | null;
-        tip?: OnChainTip;
-      },
-    };
-  } finally {
-    inflightVerify.delete(signature);
+/**
+ * Shared fail-closed verification, authority cross-check, ElevenLabs TTS,
+ * Supabase persistence, and OBS SSE broadcast pipeline.
+ * Coalesces concurrent callers synchronously by signature before any awaits.
+ */
+export function verifyAndProcessTip(
+  signature: string,
+  rawUsername: string,
+  deps: TipProcessorDeps = DEFAULT_DEPS,
+  options?: { coalesce?: boolean }
+): Promise<VerifyTipResult> {
+  const cleanSig = typeof signature === "string" ? signature.trim() : "";
+  const username =
+    typeof rawUsername === "string" ? rawUsername.trim().toLowerCase() : "";
+
+  if (!cleanSig || !username || isReservedHandle(username)) {
+    return Promise.resolve({
+      status: 400,
+      body: { error: "Missing or invalid signature or username" },
+    });
   }
+
+  // Coalesce across concurrent callers sharing runtime deps (or when opted in by tests).
+  const shouldCoalesce = options?.coalesce ?? deps === DEFAULT_DEPS;
+  if (shouldCoalesce) {
+    const existing = inflightVerifyResults.get(cleanSig);
+    if (existing) {
+      return existing.then(
+        (res: VerifyTipResult): VerifyTipResult =>
+          res.status === 200
+            ? { status: 200, body: { verified: true, alreadyProcessed: true } }
+            : res
+      );
+    }
+
+    const promise = runVerifyPipeline(cleanSig, username, deps).finally(() => {
+      inflightVerifyResults.delete(cleanSig);
+    });
+    inflightVerifyResults.set(cleanSig, promise);
+    return promise;
+  }
+
+  return runVerifyPipeline(cleanSig, username, deps);
 }

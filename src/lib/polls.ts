@@ -25,3 +25,31 @@ export function stripVoteTagForSpeech(message: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+export interface PollSignPayloadInput {
+  username: string;
+  action: "upsert" | "close";
+  question: string;
+  optionA: string;
+  optionB: string;
+  minVoteSol: number;
+  timestampMs: number;
+  nonce: string;
+}
+
+/**
+ * Canonical signed message binding every poll mutation field and replay nonce.
+ */
+export function buildPollSignPayload(input: PollSignPayloadInput): string {
+  return JSON.stringify({
+    domain: "solstream:poll:v1",
+    username: input.username.trim().toLowerCase(),
+    action: input.action,
+    question: input.question.trim(),
+    optionA: input.optionA.trim(),
+    optionB: input.optionB.trim(),
+    minVoteSol: Number(input.minVoteSol) || 0.005,
+    timestampMs: input.timestampMs,
+    nonce: input.nonce,
+  });
+}

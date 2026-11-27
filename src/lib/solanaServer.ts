@@ -53,26 +53,35 @@ export function decodeCreatorAccountBuffer(
   pda: string
 ): OnChainCreator | null {
   try {
-    if (!hasDiscriminator(buf, CREATOR_DISC) || buf.length < 44) return null;
+    if (!hasDiscriminator(buf, CREATOR_DISC) || buf.length < 8 + 32 + 12 + 33) {
+      return null;
+    }
     let offset = 8;
     const authority = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
     offset += 32;
 
+    if (offset + 4 > buf.length) return null;
     const uLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (uLen > 128 || offset + uLen > buf.length) return null;
     const username = buf.slice(offset, offset + uLen).toString("utf8");
     offset += uLen;
 
+    if (offset + 4 > buf.length) return null;
     const vLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (vLen > 128 || offset + vLen > buf.length) return null;
     const voiceId = buf.slice(offset, offset + vLen).toString("utf8");
     offset += vLen;
 
+    if (offset + 4 > buf.length) return null;
     const gLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (gLen > 256 || offset + gLen > buf.length) return null;
     const goalTitle = buf.slice(offset, offset + gLen).toString("utf8");
     offset += gLen;
 
+    if (offset + 33 > buf.length) return null;
     const goalTargetLamports = Number(buf.readBigUInt64LE(offset));
     offset += 8;
 
@@ -396,6 +405,34 @@ async function rpcCall(
   }
 }
 
+export async function checkSolanaRpcHealth(): Promise<{
+  ok: boolean;
+  slot?: number;
+}> {
+  try {
+    const res = await fetch(DEVNET_RPC_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "getSlot",
+        params: [{ commitment: "confirmed" }],
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { ok: false };
+    const data = await res.json();
+    if (data.error || typeof data.result !== "number") {
+      return { ok: false };
+    }
+    return { ok: true, slot: data.result };
+  } catch {
+    return { ok: false };
+  }
+}
+
 type OverlayListener = (tip: OnChainTip) => void;
 
 interface GlobalSolStreamStore {
@@ -534,6 +571,8 @@ export function pushVerifiedTipToMemory(username: string, tip: OnChainTip) {
   }
 }
 
+const CREATOR_DISC_B58 = bs58.encode(Buffer.from(CREATOR_DISC));
+
 export async function fetchAllOnChainCreators(
   forceFresh = false
 ): Promise<OnChainCreator[]> {
@@ -551,7 +590,11 @@ export async function fetchAllOnChainCreators(
     try {
       const accounts = await rpcCall("getProgramAccounts", [
         PROGRAM_ID.toBase58(),
-        { encoding: "base64", commitment: "confirmed" },
+        {
+          encoding: "base64",
+          commitment: "confirmed",
+          filters: [{ memcmp: { offset: 0, bytes: CREATOR_DISC_B58 } }],
+        },
       ]);
 
       const decoded: OnChainCreator[] = [];
@@ -565,9 +608,6 @@ export async function fetchAllOnChainCreators(
 
       store.creatorsCache = { items: decoded, fetchedAt: Date.now() };
       return decoded;
-    } catch (err) {
-      console.warn("fetchAllOnChainCreators RPC warning:", err);
-      return store.creatorsCache?.items || [];
     } finally {
       store.inflightCreators = null;
     }
@@ -661,6 +701,8 @@ const DEFAULT_SIG_FETCH_CAP = (() => {
   return Math.min(Math.floor(raw), 500);
 })();
 
+const MAX_SIG_PAGES = 10;
+
 export async function fetchSignaturesPaginated(
   address: string,
   maxSignatures: number = DEFAULT_SIG_FETCH_CAP,
@@ -669,8 +711,10 @@ export async function fetchSignaturesPaginated(
   const cap = Math.max(1, Math.min(Math.floor(maxSignatures), 500));
   const collected: Array<{ signature: string; err: unknown; blockTime?: number | null }> = [];
   let before: string | undefined;
+  let pages = 0;
 
-  while (collected.length < cap) {
+  while (collected.length < cap && pages < MAX_SIG_PAGES) {
+    pages += 1;
     const pageLimit = Math.min(100, cap - collected.length);
     const params: Record<string, unknown> = {
       limit: pageLimit,
@@ -704,14 +748,18 @@ export async function fetchRecentTipsForCreator(
   username: string,
   pda: string,
   forceFresh = false,
-  maxSignatures: number = DEFAULT_SIG_FETCH_CAP
+  maxSignatures: number = DEFAULT_SIG_FETCH_CAP,
+  expectedCreatorAuthority?: string
 ): Promise<OnChainTip[]> {
   const key = username.toLowerCase();
   const memTips = verifiedTipsMemory.get(key) || [];
 
   const cached = tipsCache.get(key);
   if (!forceFresh && cached && Date.now() - cached.fetchedAt < 10_000) {
-    return mergeTips(memTips, cached.items);
+    const filteredCached = expectedCreatorAuthority
+      ? cached.items.filter((t) => t.creator === expectedCreatorAuthority)
+      : cached.items;
+    return mergeTips(memTips, filteredCached);
   }
 
   const existingInflight = inflightTips.get(key);
@@ -744,7 +792,12 @@ export async function fetchRecentTipsForCreator(
       for (const s of validSigs) {
         if (txBySigCache.has(s.signature)) {
           const hit = txBySigCache.get(s.signature);
-          if (hit) decodedTips.push(hit);
+          if (
+            hit &&
+            (!expectedCreatorAuthority || hit.creator === expectedCreatorAuthority)
+          ) {
+            decodedTips.push(hit);
+          }
         } else {
           unseenSigs.push(s.signature);
         }
@@ -765,7 +818,11 @@ export async function fetchRecentTipsForCreator(
             ],
             1
           );
-          const tip = verifySolstreamTipTransaction(tx, sig);
+          const tip = verifySolstreamTipTransaction(
+            tx,
+            sig,
+            expectedCreatorAuthority
+          );
           if (tip) {
             setBoundedMap(txBySigCache, sig, tip, MAX_TX_BY_SIG_CACHE);
             decodedTips.push(tip);

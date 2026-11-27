@@ -21,6 +21,8 @@ export default function TipSuccessModal({
   onClose,
   signature,
   amountSol,
+  displayName,
+  message,
   username = "creator",
   serverVerified = true,
   ttsEngine,
@@ -40,6 +42,7 @@ export default function TipSuccessModal({
 
   const shortSig = `${signature.slice(0, 4)}...${signature.slice(-4)}`;
   const solscanUrl = `https://solscan.io/tx/${signature}?cluster=devnet`;
+  const cleanMessage = message.replace(/\[VOTE:[AB]\]/gi, "").trim();
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
@@ -52,10 +55,16 @@ export default function TipSuccessModal({
         <h3 className="text-2xl font-black text-white tracking-tight mb-1.5">
           Tip sent to @{username}
         </h3>
-        <p className="text-xs text-zinc-400 mb-6 leading-relaxed">
-          {amountSol} SOL went straight to their wallet. Your alert is on its
-          way to their stream.
+        <p className="text-xs text-zinc-400 mb-4 leading-relaxed">
+          {amountSol} SOL went straight to their wallet from{" "}
+          <strong className="text-white">{displayName || "Anonymous"}</strong>.
         </p>
+
+        {cleanMessage && (
+          <div className="mb-5 px-3.5 py-2.5 rounded-xl bg-[#090A0F] border border-white/5 text-xs text-zinc-200 italic truncate">
+            &ldquo;{cleanMessage}&rdquo;
+          </div>
+        )}
 
         {/* 3 Checklist Items Card */}
         <div className="rounded-2xl bg-[#090A0F] border border-white/5 p-4 mb-5 text-left space-y-3.5">
@@ -91,12 +100,21 @@ export default function TipSuccessModal({
 
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2.5">
-              <div className="w-5 h-5 rounded-full bg-[#14F195] text-[#090A0F] flex items-center justify-center">
-                <Check className="w-3.5 h-3.5 stroke-[3]" />
-              </div>
+              {serverVerified ? (
+                <div className="w-5 h-5 rounded-full bg-[#14F195] text-[#090A0F] flex items-center justify-center">
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                </div>
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-[#9945FF]/20 text-[#9945FF] flex items-center justify-center">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                </div>
+              )}
               <span className="font-bold text-white">
-                Alert queued on the stream
-                {ttsEngine === "elevenlabs" ? " (ElevenLabs TTS)" : ""}
+                {serverVerified
+                  ? `Alert queued on the stream${
+                      ttsEngine === "elevenlabs" ? " (ElevenLabs TTS)" : ""
+                    }`
+                  : "Queuing alert & AI voice..."}
               </span>
             </div>
             <span className="text-[11px] font-mono text-zinc-500">realtime</span>

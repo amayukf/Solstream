@@ -226,4 +226,25 @@ describe("solstream", () => {
     assert.equal(acc.goalTitle, "New Camera");
     assert.equal(acc.goalCurrentLamports.toNumber(), 0);
   });
+
+  it("only the authority can update the alert voice", async () => {
+    await expectFail(
+      () =>
+        program.methods
+          .updateVoice("21m00Tcm4TlvDq8ikWAM")
+          .accounts({ creatorAccount: creatorPda, authority: stranger.publicKey })
+          .signers([stranger])
+          .rpc(),
+      "Error"
+    );
+
+    await program.methods
+      .updateVoice("ErXwobaYiN019PkySvjV")
+      .accounts({ creatorAccount: creatorPda, authority: creator.publicKey })
+      .signers([creator])
+      .rpc();
+
+    const acc = await program.account.creatorAccount.fetch(creatorPda);
+    assert.equal(acc.voiceId, "ErXwobaYiN019PkySvjV");
+  });
 });

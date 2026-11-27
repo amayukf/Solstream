@@ -85,18 +85,25 @@ export async function GET(
 
       req.signal.addEventListener("abort", cleanup);
 
-      // Push initial creator & recent tips snapshot immediately (keep init payload free of audio bytes)
+      // Push initial creator & recent tips snapshot immediately (prefer fresh on-chain creator state over stale DB row)
       try {
         let dbCreator = null;
+        let chainCreator = null;
+        try {
+          chainCreator = await fetchOnChainCreatorByUsername(username);
+        } catch (err) {
+          console.warn("SSE chain creator read failed, falling back to DB:", err);
+        }
+
         try {
           dbCreator = await getCreatorFromDb(username);
         } catch (err) {
-          console.warn("SSE DB creator read failed, falling back to chain:", err);
+          console.warn("SSE DB creator read failed:", err);
         }
 
-        const creator =
-          dbCreator ||
-          (await fetchOnChainCreatorByUsername(username).catch(() => null));
+        const creator = chainCreator
+          ? { ...(dbCreator || {}), ...chainCreator }
+          : dbCreator;
 
         let tips: OnChainTip[] = [];
         if (dbCreator) {
@@ -108,9 +115,13 @@ export async function GET(
         }
 
         if (tips.length === 0 && creator) {
-          tips = await fetchRecentTipsForCreator(username, creator.pda).catch(
-            () => []
-          );
+          tips = await fetchRecentTipsForCreator(
+            username,
+            creator.pda,
+            false,
+            undefined,
+            creator.authority
+          ).catch(() => []);
         }
 
         let poll: CreatorPollState | null = null;

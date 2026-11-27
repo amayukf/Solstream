@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noEmit": true
+  },
+  "include": [
+    "tests/**/*.ts",
+    "target/types/**/*.ts",
+    "src/lib/**/*.ts",
+    "src/app/api/**/*.ts"
+  ]
+}

@@ -8,6 +8,7 @@ import { PROGRAM_ID } from "@/lib/constants";
 import { IDL } from "@/idl/solstream";
 
 const DEFAULT_PUBKEY = new PublicKey("11111111111111111111111111111111");
+const CREATOR_ACCOUNT_DISC = [222, 163, 32, 169, 204, 8, 200, 32];
 const HANDLE_REGISTRY_DISC = [120, 46, 76, 126, 63, 168, 217, 232];
 
 export function decodeHandleRegistry(buffer: Uint8Array | Buffer) {
@@ -28,26 +29,36 @@ export function decodeHandleRegistry(buffer: Uint8Array | Buffer) {
 export function decodeCreatorAccount(buffer: Uint8Array | Buffer) {
   try {
     const buf = Buffer.from(buffer);
-    if (buf.length < 8 + 32 + 4) return null;
+    if (buf.length < 8 + 32 + 4 + 4 + 4 + 32 + 1) return null;
+    for (let i = 0; i < 8; i++) {
+      if (buf[i] !== CREATOR_ACCOUNT_DISC[i]) return null;
+    }
     let offset = 8; // skip 8-byte discriminator
     const authority = new PublicKey(buf.slice(offset, offset + 32)).toBase58();
     offset += 32;
 
+    if (offset + 4 > buf.length) return null;
     const usernameLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (usernameLen > 128 || offset + usernameLen > buf.length) return null;
     const username = buf.slice(offset, offset + usernameLen).toString("utf8");
     offset += usernameLen;
 
+    if (offset + 4 > buf.length) return null;
     const voiceLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (voiceLen > 128 || offset + voiceLen > buf.length) return null;
     const voiceId = buf.slice(offset, offset + voiceLen).toString("utf8");
     offset += voiceLen;
 
+    if (offset + 4 > buf.length) return null;
     const titleLen = buf.readUInt32LE(offset);
     offset += 4;
+    if (titleLen > 256 || offset + titleLen > buf.length) return null;
     const goalTitle = buf.slice(offset, offset + titleLen).toString("utf8");
     offset += titleLen;
 
+    if (offset + 33 > buf.length) return null;
     const goalTargetLamports = Number(buf.readBigUInt64LE(offset));
     offset += 8;
 
@@ -168,7 +179,7 @@ export function useSolStreamProgram() {
         try {
           const acc = await (program.account as any).creatorAccount.fetch(pda);
           if (acc) return acc;
-        } catch (err) {
+        } catch {
           // Fall through to direct RPC fetch
         }
       }

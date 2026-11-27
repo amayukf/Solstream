@@ -15,7 +15,8 @@ import {
 } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { getSupabaseClient } from "@/lib/supabaseClient";
-import type { CreatorPollState } from "@/lib/polls";
+import { CURATED_VOICES } from "@/lib/constants";
+import { buildPollSignPayload, type CreatorPollState } from "@/lib/polls";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Copy,
@@ -37,12 +38,6 @@ const WalletMultiButton = dynamic(
   { ssr: false }
 );
 
-const VOICES = [
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam" },
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel" },
-  { id: "ErXwobaYiN019PkySvjV", name: "Antoni" },
-];
-
 export default function CreatorDashboardPage() {
   const { connected, publicKey, signMessage } = useWallet();
   const {
@@ -56,7 +51,8 @@ export default function CreatorDashboardPage() {
   } = useSolStreamProgram();
 
   const [username, setUsername] = useState<string | null>(null);
-  const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
+  const [selectedVoice, setSelectedVoice] = useState(CURATED_VOICES[0].id);
+  const [isUpdatingVoice, setIsUpdatingVoice] = useState<string | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [isBioCopied, setIsBioCopied] = useState(false);
   const [isBlinkCopied, setIsBlinkCopied] = useState(false);
@@ -75,9 +71,11 @@ export default function CreatorDashboardPage() {
   const [pollMinSol, setPollMinSol] = useState("0.005");
   const [isSavingPoll, setIsSavingPoll] = useState(false);
 
-  // Goal & stats
+  // Goal & stats (draft input state is isolated from displayed active goal KPI)
   const [goalTitle, setGoalTitle] = useState("Mic upgrade");
   const [goalTargetSol, setGoalTargetSol] = useState("3.0");
+  const [activeGoalTitle, setActiveGoalTitle] = useState("Mic upgrade");
+  const [activeGoalTargetSol, setActiveGoalTargetSol] = useState("3.0");
   const [currentGoalSol, setCurrentGoalSol] = useState(0);
   const [totalTipsCount, setTotalTipsCount] = useState(0);
   const [totalVolumeSol, setTotalVolumeSol] = useState(0);
@@ -103,6 +101,14 @@ export default function CreatorDashboardPage() {
           setCurrentGoalSol(
             (Number(data.creator.goalCurrentLamports) || 0) / 1_000_000_000
           );
+          if (data.creator.goalTitle) {
+            setActiveGoalTitle(String(data.creator.goalTitle));
+          }
+          if (data.creator.goalTargetLamports) {
+            setActiveGoalTargetSol(
+              (Number(data.creator.goalTargetLamports) / 1_000_000_000).toString()
+            );
+          }
           if (
             data.creator.totalTips !== undefined &&
             data.creator.totalVolume !== undefined
@@ -128,14 +134,16 @@ export default function CreatorDashboardPage() {
           if (!map.has(t.signature)) map.set(t.signature, t);
         }
         merged = Array.from(map.values()).sort((a, b) => b.timestamp - a.timestamp);
-        if (data?.poll) {
-          setActivePoll(data.poll);
-          setPollQuestion(data.poll.question);
-          setPollOptionA(data.poll.optionA);
-          setPollOptionB(data.poll.optionB);
-          setPollMinSol(
-            String(Math.max(0.001, (data.poll.minVoteLamports || 1_000_000) / 1_000_000_000))
-          );
+        if ("poll" in data) {
+          setActivePoll(data.poll || null);
+          if (data.poll) {
+            setPollQuestion(data.poll.question);
+            setPollOptionA(data.poll.optionA);
+            setPollOptionB(data.poll.optionB);
+            setPollMinSol(
+              String(Math.max(0.001, (data.poll.minVoteLamports || 1_000_000) / 1_000_000_000))
+            );
+          }
         }
       }
     } catch {
@@ -171,8 +179,11 @@ export default function CreatorDashboardPage() {
           const stored = getStoredCreator(active);
           if (stored) {
             setUsername(stored.username);
+            const storedTargetStr = (stored.goalTargetLamports / 1_000_000_000).toString();
             setGoalTitle(stored.goalTitle);
-            setGoalTargetSol((stored.goalTargetLamports / 1_000_000_000).toString());
+            setGoalTargetSol(storedTargetStr);
+            setActiveGoalTitle(stored.goalTitle);
+            setActiveGoalTargetSol(storedTargetStr);
             setSelectedVoice(stored.voiceId);
             refreshDashboardTips(stored.username);
           }
@@ -231,19 +242,27 @@ export default function CreatorDashboardPage() {
               stored?.totalVolume || 0
             );
 
-            setGoalTitle(acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal");
-            setGoalTargetSol((targetVal / 1_000_000_000).toString());
+            const resolvedGoalTitle =
+              acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal";
+            const resolvedTargetStr = (targetVal / 1_000_000_000).toString();
+            const resolvedVoiceId =
+              acc.voiceId || acc.voice_id || stored?.voiceId || CURATED_VOICES[0].id;
+
+            setGoalTitle(resolvedGoalTitle);
+            setGoalTargetSol(resolvedTargetStr);
+            setActiveGoalTitle(resolvedGoalTitle);
+            setActiveGoalTargetSol(resolvedTargetStr);
             setCurrentGoalSol(currentVal / 1_000_000_000);
             setTotalTipsCount(chainTotalTips);
             setTotalVolumeSol(chainTotalVolume / 1_000_000_000);
-            setSelectedVoice(acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id);
+            setSelectedVoice(resolvedVoiceId);
 
             saveStoredCreator(
               {
                 username: onChainHandle,
                 authority: walletStr,
-                voiceId: acc.voiceId || acc.voice_id || stored?.voiceId || VOICES[0].id,
-                goalTitle: acc.goalTitle || acc.goal_title || stored?.goalTitle || "Stream Goal",
+                voiceId: resolvedVoiceId,
+                goalTitle: resolvedGoalTitle,
                 goalTargetLamports: targetVal,
                 goalCurrentLamports: currentVal,
                 totalTips: chainTotalTips,
@@ -265,9 +284,12 @@ export default function CreatorDashboardPage() {
       // 2. Check localStorage for a creator registered to this specific wallet
       const walletCreator = getCreatorByWallet(walletStr);
       if (walletCreator) {
+        const walletTargetStr = (walletCreator.goalTargetLamports / 1_000_000_000).toString();
         setUsername(walletCreator.username);
         setGoalTitle(walletCreator.goalTitle);
-        setGoalTargetSol((walletCreator.goalTargetLamports / 1_000_000_000).toString());
+        setGoalTargetSol(walletTargetStr);
+        setActiveGoalTitle(walletCreator.goalTitle);
+        setActiveGoalTargetSol(walletTargetStr);
         setSelectedVoice(walletCreator.voiceId);
         setIsInitialized(false); // needs on-chain initialization
         refreshDashboardTips(walletCreator.username);
@@ -276,9 +298,12 @@ export default function CreatorDashboardPage() {
         const active = getActiveHandle();
         const stored = active ? getStoredCreator(active) : null;
         if (stored && stored.authority.toLowerCase() === walletStr.toLowerCase()) {
+          const storedTargetStr = (stored.goalTargetLamports / 1_000_000_000).toString();
           setUsername(stored.username);
           setGoalTitle(stored.goalTitle);
-          setGoalTargetSol((stored.goalTargetLamports / 1_000_000_000).toString());
+          setGoalTargetSol(storedTargetStr);
+          setActiveGoalTitle(stored.goalTitle);
+          setActiveGoalTargetSol(storedTargetStr);
           setSelectedVoice(stored.voiceId);
           setIsInitialized(false);
           refreshDashboardTips(stored.username);
@@ -328,10 +353,6 @@ export default function CreatorDashboardPage() {
     };
   }, [username, refreshDashboardTips]);
 
-  const shortWallet = publicKey
-    ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
-    : null;
-
   const tipPageUrl = typeof window !== "undefined" && username
     ? `${window.location.origin}/${username}`
     : username
@@ -378,7 +399,21 @@ export default function CreatorDashboardPage() {
     setStatusMessage(null);
     try {
       const timestampMs = Date.now();
-      const signedMessage = `solstream:poll:${username}:${timestampMs}:${action}`;
+      const nonce =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `${timestampMs}-${Math.random().toString(36).slice(2, 12)}`;
+      const minVoteSol = Math.max(0.001, parseFloat(pollMinSol) || 0.005);
+      const signedMessage = buildPollSignPayload({
+        username,
+        action,
+        question: pollQuestion,
+        optionA: pollOptionA,
+        optionB: pollOptionB,
+        minVoteSol,
+        timestampMs,
+        nonce,
+      });
       const sigBytes = await signMessage(new TextEncoder().encode(signedMessage));
       let binary = "";
       for (let i = 0; i < sigBytes.length; i++) {
@@ -394,11 +429,12 @@ export default function CreatorDashboardPage() {
           signedMessage,
           signature,
           timestampMs,
+          nonce,
           action,
           question: pollQuestion,
           optionA: pollOptionA,
           optionB: pollOptionB,
-          minVoteSol: parseFloat(pollMinSol) || 0.005,
+          minVoteSol,
         }),
       });
       const data = await res.json().catch(() => null);
@@ -429,18 +465,32 @@ export default function CreatorDashboardPage() {
 
   const handleInitOnChain = async () => {
     if (!connected || !publicKey || !username) return;
+    const cleanGoalTitle = goalTitle.trim() || "Stream Goal";
+    if (new TextEncoder().encode(cleanGoalTitle).length > 64) {
+      setStatusMessage("❌ Goal title exceeds the 64-byte on-chain UTF-8 limit.");
+      return;
+    }
+    const targetNum = parseFloat(goalTargetSol);
+    if (isNaN(targetNum) || targetNum < 0.01) {
+      setStatusMessage("❌ Goal target must be at least 0.01 SOL.");
+      return;
+    }
+
     setIsInitializing(true);
     setStatusMessage(null);
     try {
-      const lamports = Math.round(parseFloat(goalTargetSol) * 1_000_000_000);
-      await initializeCreator(username, selectedVoice, lamports, goalTitle);
+      const lamports = Math.round(targetNum * 1_000_000_000);
+      await initializeCreator(username, selectedVoice, lamports, cleanGoalTitle);
       setIsInitialized(true);
+      setGoalTitle(cleanGoalTitle);
+      setActiveGoalTitle(cleanGoalTitle);
+      setActiveGoalTargetSol(targetNum.toString());
       saveStoredCreator(
         {
           username,
           authority: publicKey.toBase58(),
           voiceId: selectedVoice,
-          goalTitle,
+          goalTitle: cleanGoalTitle,
           goalTargetLamports: lamports,
           goalCurrentLamports: 0,
           createdAt: Date.now(),
@@ -461,13 +511,23 @@ export default function CreatorDashboardPage() {
         errMsg.includes("0x0") ||
         errMsg.includes("AccountAlreadyInUse")
       ) {
-        setIsInitialized(true);
-        await fetch("/api/creators/register", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
-        }).catch(() => {});
-        setStatusMessage(`✅ @${username} is already active on Solana Devnet!`);
+        const ownAcc = await fetchCreatorAccount(getCreatorPda(publicKey)).catch(
+          () => null
+        );
+        if (ownAcc && ownAcc.username) {
+          setIsInitialized(true);
+          await fetch("/api/creators/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+          }).catch(() => {});
+          setStatusMessage(`✅ @${username} is already active on Solana Devnet!`);
+        } else {
+          setIsInitialized(false);
+          setStatusMessage(
+            `❌ Handle @${username} is already claimed by another wallet on Solana Devnet.`
+          );
+        }
       } else {
         setStatusMessage(`❌ Error initializing: ${errMsg}`);
       }
@@ -497,6 +557,9 @@ export default function CreatorDashboardPage() {
       const lamports = Math.round(targetNum * 1_000_000_000);
       await updateGoal(lamports, cleanGoalTitle);
       setCurrentGoalSol(0);
+      setGoalTitle(cleanGoalTitle);
+      setActiveGoalTitle(cleanGoalTitle);
+      setActiveGoalTargetSol(targetNum.toString());
       saveStoredCreator(
         {
           username,
@@ -524,7 +587,7 @@ export default function CreatorDashboardPage() {
 
   const handleSelectVoice = async (voiceId: string) => {
     const previousVoice = selectedVoice;
-    if (voiceId === previousVoice) return;
+    if (voiceId === previousVoice || isUpdatingVoice) return;
 
     const persistVoiceLocally = (targetVoice: string) => {
       if (username && publicKey) {
@@ -533,9 +596,9 @@ export default function CreatorDashboardPage() {
             username,
             authority: publicKey.toBase58(),
             voiceId: targetVoice,
-            goalTitle,
+            goalTitle: activeGoalTitle,
             goalTargetLamports: Math.round(
-              (parseFloat(goalTargetSol) || 3.0) * 1_000_000_000
+              (parseFloat(activeGoalTargetSol) || 3.0) * 1_000_000_000
             ),
             goalCurrentLamports: Math.round(currentGoalSol * 1_000_000_000),
             createdAt: Date.now(),
@@ -552,6 +615,7 @@ export default function CreatorDashboardPage() {
       return;
     }
 
+    setIsUpdatingVoice(voiceId);
     setSelectedVoice(voiceId);
     setStatusMessage(null);
     try {
@@ -569,13 +633,15 @@ export default function CreatorDashboardPage() {
       const msg =
         err instanceof Error ? err.message : "Failed to update voice on-chain.";
       setStatusMessage(`❌ Error: ${msg}`);
+    } finally {
+      setIsUpdatingVoice(null);
     }
   };
 
   useEffect(() => {
     if (!connected || !isInitialized || !username) {
-      setIsHandleLocked(null);
-      return;
+      const resetTimer = setTimeout(() => setIsHandleLocked(null), 0);
+      return () => clearTimeout(resetTimer);
     }
     let cancelled = false;
     fetchHandleRegistry(username)
@@ -610,7 +676,7 @@ export default function CreatorDashboardPage() {
   };
 
   const goalPercentage = Math.min(
-    Math.round((currentGoalSol / (parseFloat(goalTargetSol) || 1)) * 100),
+    Math.round((currentGoalSol / (parseFloat(activeGoalTargetSol) || 1)) * 100),
     100
   );
 
@@ -643,14 +709,15 @@ export default function CreatorDashboardPage() {
             </Link>
           )}
 
-          {connected ? (
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono text-zinc-300">
-              <span className="w-2 h-2 rounded-full bg-[#14F195]" />
-              <span>{shortWallet}</span>
-            </div>
-          ) : (
+          <div className="flex items-center gap-2">
+            {connected && (
+              <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#13141F] border border-white/10 text-[11px] font-mono text-zinc-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#14F195]" />
+                Devnet
+              </span>
+            )}
             <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
-          )}
+          </div>
         </div>
       </header>
 
@@ -886,7 +953,7 @@ export default function CreatorDashboardPage() {
 
               <div className="rounded-2xl bg-[#13141F] border border-white/5 p-6">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mb-2">
-                  ACTIVE GOAL · {goalTitle.toUpperCase()}
+                  ACTIVE GOAL · {activeGoalTitle.toUpperCase()}
                 </div>
                 <div className="text-3xl font-black text-[#14F195] font-mono mb-2">
                   {goalPercentage}%
@@ -918,8 +985,8 @@ export default function CreatorDashboardPage() {
                       <div className="flex-1 sm:w-28 flex items-center bg-[#090A0F] border border-white/10 rounded-xl px-3 py-2.5 focus-within:border-[#9945FF]">
                         <input
                           type="number"
-                          step="0.1"
-                          min="0.1"
+                          step="any"
+                          min="0.01"
                           value={goalTargetSol}
                           onChange={(e) => setGoalTargetSol(e.target.value)}
                           className="w-full bg-transparent text-xs text-white font-mono focus:outline-none"
@@ -946,44 +1013,59 @@ export default function CreatorDashboardPage() {
                 {/* Alert Voice Card */}
                 <div className="rounded-2xl bg-[#13141F] border border-white/5 p-5 sm:p-6">
                   <h2 className="text-sm font-bold text-white mb-4">Alert voice</h2>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    {VOICES.map((v) => {
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {CURATED_VOICES.map((v) => {
                       const isSelected = selectedVoice === v.id;
+                      const isSavingThis = isUpdatingVoice === v.id;
                       return (
                         <div
                           key={v.id}
-                          onClick={() => handleSelectVoice(v.id)}
-                          className={`p-3.5 rounded-2xl cursor-pointer transition-all ${
+                          className={`rounded-2xl p-3.5 transition-all flex flex-col justify-between gap-2.5 ${
                             isSelected
                               ? "bg-[#1E1838] border-2 border-[#9945FF]"
                               : "bg-[#090A0F] border border-white/10 hover:border-white/20"
                           }`}
                         >
-                          <div className="text-xs font-bold text-white mb-2">
-                            {v.name}
-                          </div>
+                          <button
+                            type="button"
+                            disabled={Boolean(isUpdatingVoice)}
+                            onClick={() => handleSelectVoice(v.id)}
+                            className="w-full text-left focus:outline-none disabled:opacity-60"
+                          >
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span className="text-xs font-bold text-white">
+                                {v.name}
+                              </span>
+                              {isSavingThis && (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#9945FF]" />
+                              )}
+                            </div>
+                            <div className="text-[11px] text-zinc-400 mb-2">
+                              {v.gender} · {v.accent}
+                            </div>
 
-                          <div className="flex items-end gap-1 h-5 mb-3">
-                            <span className="w-1 h-2 bg-[#9945FF] rounded-full" />
-                            <span className="w-1 h-4 bg-[#9945FF] rounded-full" />
-                            <span className="w-1 h-3 bg-[#9945FF] rounded-full" />
-                            <span className="w-1 h-5 bg-[#9945FF] rounded-full" />
-                          </div>
+                            <div className="flex items-end gap-1 h-4">
+                              <span className="w-1 h-2 bg-[#9945FF] rounded-full" />
+                              <span className="w-1 h-4 bg-[#9945FF] rounded-full" />
+                              <span className="w-1 h-3 bg-[#9945FF] rounded-full" />
+                              <span className="w-1 h-4 bg-[#9945FF] rounded-full" />
+                            </div>
+                          </button>
 
                           <button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
+                            onClick={() => {
                               if (typeof window !== "undefined" && window.speechSynthesis) {
+                                window.speechSynthesis.cancel();
                                 const u = new SpeechSynthesisUtterance(
                                   `Hi, this is ${v.name} reading your stream alerts live on SolStream!`
                                 );
                                 window.speechSynthesis.speak(u);
                               }
                             }}
-                            className="text-[10px] text-zinc-400 hover:text-white"
+                            className="self-start text-[10px] font-semibold text-zinc-400 hover:text-white transition-colors"
                           >
-                            Preview
+                            Preview voice
                           </button>
                         </div>
                       );

@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
-    const rl = checkRateLimit("watch_qr", getClientIp(req), 40, 60_000);
+    const rl = checkRateLimit("watch_qr", getClientIp(req), 120, 60_000);
     if (!rl.allowed) {
       return rateLimitJsonResponse(rl.retryAfterSeconds);
     }

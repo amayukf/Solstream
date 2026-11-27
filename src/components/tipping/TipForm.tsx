@@ -227,7 +227,7 @@ export const TipForm: React.FC<TipFormProps> = ({
           <input
             ref={customInputRef}
             type="number"
-            step="0.001"
+            step="any"
             min="0.001"
             value={customAmount}
             onChange={(e) => handleManualAmountChange(e.target.value)}
@@ -354,7 +354,14 @@ export const TipForm: React.FC<TipFormProps> = ({
       <div>
         <div className="flex items-center justify-between text-[11px] text-zinc-400 mb-1.5 font-medium">
           <span>Stream alert message (read live by AI)</span>
-          <span className="font-mono tabular-nums">{message.length} / 100</span>
+          <span className="font-mono tabular-nums">
+            {new TextEncoder().encode(
+              selectedVote && activePoll?.isActive
+                ? `[VOTE:${selectedVote}] ${message}`
+                : message
+            ).length}{" "}
+            / 300 bytes
+          </span>
         </div>
         <textarea
           rows={2}

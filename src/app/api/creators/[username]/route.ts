@@ -9,6 +9,7 @@ import {
 import {
   getCreatorFromDb,
   getTipsFromDb,
+  getExistingTipSignaturesInDb,
   getTopDonorsFromDb,
   getPollWithResultsFromDb,
   syncCreatorExactStatsInDb,
@@ -166,7 +167,9 @@ export async function GET(
         chainTips = await fetchRecentTipsForCreator(
           username,
           resolvedCreator.pda,
-          fresh || chainAheadOfDb
+          fresh || chainAheadOfDb,
+          undefined,
+          resolvedCreator.authority
         );
       } catch (err) {
         console.warn(
@@ -176,16 +179,34 @@ export async function GET(
       }
 
       if (dbHealthy && resolvedCreator.id && chainTips.length > 0) {
-        const seenInDb = new Set(dbTips.map((t) => t.signature));
+        let insertedCount = 0;
+        let existingSigs: Set<string>;
+        try {
+          existingSigs = await getExistingTipSignaturesInDb(
+            chainTips.map((t) => t.signature)
+          );
+        } catch {
+          existingSigs = new Set(dbTips.map((t) => t.signature));
+        }
+
         for (const t of chainTips) {
-          if (seenInDb.has(t.signature)) continue;
+          if (existingSigs.has(t.signature)) continue;
           try {
-            await insertTipInDb(resolvedCreator.id, username, t, null);
+            const res = await insertTipInDb(
+              resolvedCreator.id,
+              username,
+              t,
+              null
+            );
+            if (res.inserted) insertedCount += 1;
           } catch (err) {
             console.warn(`Historical tip backfill warning for @${username}:`, err);
           }
         }
-        if (chainCreator && needsCreatorDbSync(dbCreator, chainCreator)) {
+        if (
+          chainCreator &&
+          (insertedCount > 0 || needsCreatorDbSync(dbCreator, chainCreator))
+        ) {
           try {
             const synced = await syncCreatorExactStatsInDb(chainCreator);
             if (synced) dbCreator = synced;

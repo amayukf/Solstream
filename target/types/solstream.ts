@@ -258,6 +258,11 @@ export type Solstream = {
       code: 6008;
       name: "mathOverflow";
       msg: "Math overflow";
+    },
+    {
+      code: 6009;
+      name: "reservedUsername";
+      msg: "This handle name is reserved by the platform";
     }
   ];
   types: [

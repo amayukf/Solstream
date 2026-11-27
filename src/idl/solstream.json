@@ -98,7 +98,8 @@
     { "code": 6005, "name": "TipTooSmall", "msg": "Tip is below the minimum amount" },
     { "code": 6006, "name": "InvalidTier", "msg": "Invalid gift tier" },
     { "code": 6007, "name": "WrongRecipient", "msg": "Recipient does not match the creator's wallet" },
-    { "code": 6008, "name": "MathOverflow", "msg": "Math overflow" }
+    { "code": 6008, "name": "MathOverflow", "msg": "Math overflow" },
+    { "code": 6009, "name": "ReservedUsername", "msg": "This handle name is reserved by the platform" }
   ],
   "types": [
     {

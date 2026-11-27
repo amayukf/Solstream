@@ -4,7 +4,11 @@ import {
   buildSerializedSendTipTransaction,
 } from "@/lib/solanaServer";
 import { getCreatorFromDb, getPollWithResultsFromDb } from "@/lib/supabaseDb";
-import { getTierForAmountSol, MIN_TIP_LAMPORTS } from "@/lib/constants";
+import {
+  getTierForAmountSol,
+  MIN_TIP_LAMPORTS,
+  isReservedHandle,
+} from "@/lib/constants";
 import { ACTIONS_CORS_HEADERS, resolveRequestOrigin } from "@/lib/solanaActions";
 
 export const dynamic = "force-dynamic";
@@ -29,13 +33,45 @@ export async function GET(
   try {
     const { username: rawUsername } = await context.params;
     const username = rawUsername.trim().toLowerCase();
+    if (!username || isReservedHandle(username)) {
+      return Response.json(
+        { error: `Creator @${username} not found on SolStream` },
+        { status: 404, headers: ACTIONS_CORS_HEADERS }
+      );
+    }
+
+    const url = new URL(req.url);
+    const rawRef = url.searchParams.get("ref")?.trim() || "";
+    let validRef = "";
+    if (rawRef) {
+      try {
+        validRef = new PublicKey(rawRef).toBase58();
+      } catch {
+        return Response.json(
+          { error: "Invalid Solana Pay reference key" },
+          { status: 400, headers: ACTIONS_CORS_HEADERS }
+        );
+      }
+    }
+    const refSuffix = validRef ? `&ref=${encodeURIComponent(validRef)}` : "";
     const origin = resolveRequestOrigin(req);
 
-    const [dbCreator, chainCreator, activePoll] = await Promise.all([
-      getCreatorFromDb(username).catch(() => null),
-      fetchOnChainCreatorByUsername(username).catch(() => null),
-      getPollWithResultsFromDb(username).catch(() => null),
+    const [dbRes, chainRes, pollRes] = await Promise.allSettled([
+      getCreatorFromDb(username),
+      fetchOnChainCreatorByUsername(username),
+      getPollWithResultsFromDb(username),
     ]);
+
+    const dbCreator = dbRes.status === "fulfilled" ? dbRes.value : null;
+    const chainCreator = chainRes.status === "fulfilled" ? chainRes.value : null;
+    const activePoll = pollRes.status === "fulfilled" ? pollRes.value : null;
+
+    if (!chainCreator && !dbCreator && chainRes.status === "rejected") {
+      return Response.json(
+        { error: "Solana RPC temporarily unavailable" },
+        { status: 503, headers: ACTIONS_CORS_HEADERS }
+      );
+    }
 
     const creator = chainCreator || dbCreator;
     if (!creator) {
@@ -56,17 +92,17 @@ export async function GET(
       {
         type: "transaction",
         label: "☕ 0.005 SOL",
-        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.005`,
+        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.005${refSuffix}`,
       },
       {
         type: "transaction",
         label: "🔥 0.025 SOL",
-        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.025`,
+        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.025${refSuffix}`,
       },
       {
         type: "transaction",
         label: "💎 0.05 SOL",
-        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.05`,
+        href: `/api/actions/tip/${encodeURIComponent(username)}?amount=0.05${refSuffix}`,
       },
     ];
 
@@ -81,14 +117,14 @@ export async function GET(
           label: `Vote A: ${activePoll.optionA} (${voteSol} SOL)`,
           href: `/api/actions/tip/${encodeURIComponent(
             username
-          )}?amount=${voteSol}&vote=A`,
+          )}?amount=${voteSol}&vote=A${refSuffix}`,
         },
         {
           type: "transaction",
           label: `Vote B: ${activePoll.optionB} (${voteSol} SOL)`,
           href: `/api/actions/tip/${encodeURIComponent(
             username
-          )}?amount=${voteSol}&vote=B`,
+          )}?amount=${voteSol}&vote=B${refSuffix}`,
         }
       );
     }
@@ -98,7 +134,7 @@ export async function GET(
       label: "Tip with Alert Message",
       href: `/api/actions/tip/${encodeURIComponent(
         username
-      )}?amount={amount}&name={name}&message={message}`,
+      )}?amount={amount}&name={name}&message={message}${refSuffix}`,
       parameters: [
         {
           type: "number",
@@ -148,6 +184,13 @@ export async function POST(
   try {
     const { username: rawUsername } = await context.params;
     const username = rawUsername.trim().toLowerCase();
+    if (!username || isReservedHandle(username)) {
+      return Response.json(
+        { message: `Creator @${username} not found on SolStream` },
+        { status: 404, headers: ACTIONS_CORS_HEADERS }
+      );
+    }
+
     const url = new URL(req.url);
     const body = await req.json().catch(() => null);
 
@@ -226,7 +269,17 @@ export async function POST(
       rawMessage || (votePrefix ? `Voted Option ${voteRaw}!` : "Tipped via Solana Blink ⚡");
     const message = trimToMaxUtf8Bytes(`${votePrefix}${baseMessage}`, 300);
 
-    const creator = await fetchOnChainCreatorByUsername(username);
+    let creator = null;
+    try {
+      creator = await fetchOnChainCreatorByUsername(username);
+    } catch (rpcErr) {
+      console.error("POST /api/actions/tip/[username] RPC failure:", rpcErr);
+      return Response.json(
+        { message: "Solana RPC temporarily unavailable" },
+        { status: 503, headers: ACTIONS_CORS_HEADERS }
+      );
+    }
+
     if (!creator) {
       return Response.json(
         { message: `Creator @${username} not found on Solana Devnet` },

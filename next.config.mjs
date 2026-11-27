@@ -7,6 +7,18 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig = {
   reactStrictMode: true,
   outputFileTracingRoot: __dirname,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "coin-images.coingecko.com",
+      },
+      {
+        protocol: "https",
+        hostname: "assets.coingecko.com",
+      },
+    ],
+  },
   async headers() {
     return [
       {

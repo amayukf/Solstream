@@ -31,6 +31,10 @@ yarn-error.log*
 # vercel
 .vercel
 
+# anchor build artifacts (keep target/types tracked)
+/target/*
+!/target/types/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

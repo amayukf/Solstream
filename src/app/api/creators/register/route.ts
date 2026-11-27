@@ -14,6 +14,7 @@ import {
   getClientIp,
   rateLimitJsonResponse,
 } from "@/lib/rateLimit";
+import { isReservedHandle } from "@/lib/constants";
 
 export async function POST(req: Request) {
   try {
@@ -43,11 +44,28 @@ export async function POST(req: Request) {
     }
 
     // Zero-trust: always verify creator PDA account directly on Solana Devnet
-    const onChainCreator = await fetchOnChainCreatorByWallet(walletAddress);
+    let onChainCreator = null;
+    try {
+      onChainCreator = await fetchOnChainCreatorByWallet(walletAddress);
+    } catch (rpcErr) {
+      console.error("POST /api/creators/register Solana RPC failure:", rpcErr);
+      return NextResponse.json(
+        { error: "Solana RPC temporarily unavailable" },
+        { status: 503 }
+      );
+    }
+
     if (!onChainCreator) {
       return NextResponse.json(
         { error: "No CreatorAccount PDA found on Solana Devnet for this wallet" },
         { status: 404 }
+      );
+    }
+
+    if (isReservedHandle(onChainCreator.username)) {
+      return NextResponse.json(
+        { error: `Handle @${onChainCreator.username} is reserved.` },
+        { status: 400 }
       );
     }
 

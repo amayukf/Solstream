@@ -67,7 +67,9 @@ export default function HomePage() {
     const stored = getActiveHandle();
     const storedCreator = stored ? getStoredCreator(stored) : null;
     const ownedActive = stored && storedCreator ? stored : null;
-    if (ownedActive) setActiveHandle(ownedActive);
+    const activeTimer = ownedActive
+      ? setTimeout(() => setActiveHandle(ownedActive), 0)
+      : null;
 
     fetch("/api/creators")
       .then((r) => (r.ok ? r.json() : null))
@@ -92,6 +94,10 @@ export default function HomePage() {
         }
       })
       .catch(() => {});
+
+    return () => {
+      if (activeTimer) clearTimeout(activeTimer);
+    };
   }, []);
 
   const myCreator = useMemo(() => {

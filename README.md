@@ -24,8 +24,9 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 - **Contract Source:** [`programs/solstream/src/lib.rs`](./programs/solstream/src/lib.rs)
 - **Anchor 0.30 IDL:** [`src/idl/solstream.json`](./src/idl/solstream.json)
 
-### Instructions
-- `initialize_creator(username, voice_id, goal_target, goal_title)` — Allocates creator PDA (`[b"creator", authority]`).
+### Instructions & Accounts
+- `initialize_creator(username, voice_id, goal_target, goal_title)` — Allocates creator PDA (`[b"creator", authority]`) and locks global handle uniqueness in `HandleRegistry` (`[b"handle", username.as_bytes()]`), rejecting reserved platform route handles (`ReservedUsername`).
+- `register_existing_handle(username)` — One-time backfill helper allowing pre-`HandleRegistry` creators to lock their existing handle PDA on-chain.
 - `send_tip(amount, tier, display_name, message)` — Enforces `amount >= 1_000_000` lamports (`0.001 SOL`), locks recipient with `has_one = authority`, executes CPI transfer, updates counters with `checked_add`, and emits `TipEvent`.
 - `update_goal(new_target, new_title)` — Creator-only goal manager.
 - `update_voice(new_voice_id)` — Creator-only alert persona updater.
@@ -46,6 +47,7 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 | `/api/tips/watch` | Watches a Solana Pay `reference` public key so mobile QR tips auto-verify and fire on OBS in ~1 second. |
 | `/api/creators/import-profile` | Optional Firecrawl-powered URL scraper that auto-fills creator handle & stream goal ideas on `/claim`. |
 | `/api/tips/recover` | Protected background tip-recovery endpoint (`GET`/`POST`, fails closed with `503` if `SOLSTREAM_RECOVERY_SECRET` / `CRON_SECRET` is unset and `401` if unauthorized) that scans paginated on-chain signatures (`SOLSTREAM_SIG_FETCH_CAP`) and ingests missed tips idempotently without generating TTS. |
+| `/api/health` | Runtime health check returning `{ ok, db, rpc, timestamp }` after probing Postgres (`SELECT 1`) and Solana Devnet RPC (`getSlot`). |
 | `/api/prices` | Server-cached live Solana ecosystem price feed (CoinGecko primary with Binance fallback). |
 
 ---
@@ -99,11 +101,18 @@ Traditional streaming monetization platforms (Twitch Bits, YouTube SuperChat) ta
 ```bash
 npm run typecheck
 npm run lint
+npm run test:unit
 npm run build
 ```
 
+### Database Migrations (`supabase/migrations/`)
+Run the numbered migrations in order against your Supabase PostgreSQL instance:
+1. `001_solstream_schema.sql` — `creators` and `tips` tables + RLS + Realtime publication.
+2. `002_creator_polls.sql` — `creator_polls` table + Realtime publication for Live Micro-Vote polls.
+3. `003_tips_creator_id_index.sql` — `idx_tips_creator_id` index for fast leaderboard queries.
+
 ### Anchor Smart Contract Build & Test Setup
-This workspace includes standard Anchor `0.30.1` scaffolding ([`Anchor.toml`](./Anchor.toml), [`Cargo.toml`](./Cargo.toml), [`programs/solstream/Cargo.toml`](./programs/solstream/Cargo.toml), and [`target/types/solstream.ts`](./target/types/solstream.ts)) bound to program ID `BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`.
+This workspace includes standard Anchor `0.30.1` scaffolding ([`Anchor.toml`](./Anchor.toml), [`Cargo.toml`](./Cargo.toml), [`programs/solstream/Cargo.toml`](./programs/solstream/Cargo.toml), and [`target/types/solstream.ts`](./target/types/solstream.ts)) bound to program ID `BN6Zt6ctB4B5dTs8myMrq6CUp5Lea7jMitG9bp8cGKuA`. Anchor Mocha tests compile via [`tsconfig.test.json`](./tsconfig.test.json) (`npm run test:anchor`).
 
 To build the Solana program and run the full Anchor Mocha test suite in [`tests/solstream.ts`](./tests/solstream.ts) (requires Rust, Solana CLI, and Anchor CLI `0.30.1`, e.g. on Linux/macOS/WSL2 or via GitHub Actions CI in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)):
 ```bash
@@ -111,6 +120,7 @@ To build the Solana program and run the full Anchor Mocha test suite in [`tests/
 anchor build
 npm test   # runs `anchor test` against local validator
 ```
+When upgrading the Devnet program (e.g., to enable `HandleRegistry`, `register_existing_handle`, or `ReservedUsername`), follow [`HANDLE_REGISTRY_MIGRATION.md`](./HANDLE_REGISTRY_MIGRATION.md) and commit the generated `Cargo.lock` for reproducible Anchor builds.
 
 ---
 

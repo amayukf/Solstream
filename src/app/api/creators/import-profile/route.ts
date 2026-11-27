@@ -1,39 +1,10 @@
 import { NextResponse } from "next/server";
-import net from "net";
+import { validatePublicScrapeUrl } from "@/lib/urlSafety";
 import {
   checkRateLimit,
   getClientIp,
   rateLimitJsonResponse,
 } from "@/lib/rateLimit";
-
-function isPrivateOrLocalHostname(hostname: string): boolean {
-  const lower = hostname.trim().toLowerCase();
-  if (
-    !lower ||
-    lower === "localhost" ||
-    lower.endsWith(".localhost") ||
-    lower.endsWith(".local") ||
-    lower.endsWith(".internal")
-  ) {
-    return true;
-  }
-
-  const ipType = net.isIP(lower);
-  if (ipType === 4) {
-    const parts = lower.split(".").map(Number);
-    const [a, b] = parts;
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-  } else if (ipType === 6) {
-    if (lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80")) {
-      return true;
-    }
-  }
-  return false;
-}
 
 function suggestHandleFromUrlAndTitle(urlObj: URL, title: string): string {
   const segments = urlObj.pathname
@@ -81,28 +52,10 @@ export async function POST(req: Request) {
 
     const body = await req.json().catch(() => null);
     const rawUrl = typeof body?.url === "string" ? body.url.trim() : "";
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(rawUrl);
-    } catch {
-      return NextResponse.json(
-        { error: "Please enter a valid https:// URL." },
-        { status: 400 }
-      );
-    }
 
-    if (parsedUrl.protocol !== "https:") {
-      return NextResponse.json(
-        { error: "Only public https:// channel URLs are supported." },
-        { status: 400 }
-      );
-    }
-
-    if (isPrivateOrLocalHostname(parsedUrl.hostname)) {
-      return NextResponse.json(
-        { error: "Private or local URLs are not permitted." },
-        { status: 400 }
-      );
+    const validated = await validatePublicScrapeUrl(rawUrl);
+    if (!validated.ok) {
+      return NextResponse.json({ error: validated.error }, { status: 400 });
     }
 
     const fcRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
@@ -112,7 +65,7 @@ export async function POST(req: Request) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        url: parsedUrl.toString(),
+        url: validated.url.toString(),
         formats: ["markdown"],
         onlyMainContent: true,
         timeout: 15000,
@@ -132,12 +85,15 @@ export async function POST(req: Request) {
     const description = String(data?.data?.metadata?.description || "");
     const markdown = String(data?.data?.markdown || "");
 
-    const suggestedHandle = suggestHandleFromUrlAndTitle(parsedUrl, title);
-    const suggestedGoal = suggestGoalFromContent(title, `${description} ${markdown.slice(0, 600)}`);
+    const suggestedHandle = suggestHandleFromUrlAndTitle(validated.url, title);
+    const suggestedGoal = suggestGoalFromContent(
+      title,
+      `${description} ${markdown.slice(0, 600)}`
+    );
 
     return NextResponse.json({
       provider: "firecrawl",
-      sourceUrl: parsedUrl.toString(),
+      sourceUrl: validated.url.toString(),
       title: title.slice(0, 120),
       suggestedHandle,
       suggestedGoal,

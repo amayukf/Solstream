@@ -110,10 +110,13 @@ export default function FanTippingPage({
   }, [username, mergeTipLists]);
 
   useEffect(() => {
-    refreshTips();
+    const initTimer = setTimeout(() => {
+      refreshTips();
+    }, 0);
     window.addEventListener("storage", refreshTips);
     window.addEventListener("solstream_new_tip", refreshTips as any);
     return () => {
+      clearTimeout(initTimer);
       window.removeEventListener("storage", refreshTips);
       window.removeEventListener("solstream_new_tip", refreshTips as any);
     };
@@ -328,7 +331,11 @@ export default function FanTippingPage({
           }
         }
 
-        if (res.status === 404) {
+        if (
+          res.status === 400 ||
+          (res.status === 404 &&
+            (!creatorProfile.isInitialized || targetUsername !== username))
+        ) {
           removePendingVerification(sig);
           return false;
         }
@@ -340,7 +347,7 @@ export default function FanTippingPage({
         return false;
       }
     },
-    [username]
+    [username, creatorProfile.isInitialized]
   );
 
   const flushPendingVerifications = useCallback(async () => {
@@ -375,10 +382,6 @@ export default function FanTippingPage({
       window.removeEventListener("focus", flushPendingVerifications);
     };
   }, [flushPendingVerifications]);
-
-  const shortWallet = publicKey
-    ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
-    : null;
 
   const handleSendTip = async (
     lamports: number,
@@ -466,17 +469,14 @@ export default function FanTippingPage({
           </span>
         </div>
 
-        <div>
-          {connected ? (
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono text-zinc-300">
+        <div className="flex items-center gap-2.5">
+          {connected && (
+            <div className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono text-zinc-300">
               <span className="w-2 h-2 rounded-full bg-[#14F195]" />
-              <span>
-                {shortWallet} · {walletBalance} SOL
-              </span>
+              <span>{walletBalance} SOL · Devnet</span>
             </div>
-          ) : (
-            <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
           )}
+          <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
         </div>
       </header>
 

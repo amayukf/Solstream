@@ -12,6 +12,10 @@ export const ACTIONS_CORS_HEADERS: Record<string, string> = {
 };
 
 export function resolveRequestOrigin(req: Request): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
+  if (configured && /^https?:\/\//i.test(configured)) {
+    return configured;
+  }
   const url = new URL(req.url);
   const proto = req.headers.get("x-forwarded-proto") || url.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || url.host;

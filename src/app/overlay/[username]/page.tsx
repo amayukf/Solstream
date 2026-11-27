@@ -200,6 +200,16 @@ export default function ObsOverlayPage({
   const activeAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentAlertRef = useRef<AlertItem | null>(null);
   const isFirstLocalLoad = useRef(true);
+  const syncedTotalTipsRef = useRef(0);
+  const optimisticAheadRef = useRef(0);
+  const authoritativeAheadRef = useRef(0);
+  const audioPlaybackRef = useRef<{
+    alertId: string;
+    chimeDoneAt: number;
+    audioPlayed: boolean;
+  }>({ alertId: "", chimeDoneAt: 0, audioPlayed: false });
+  const audioTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     currentAlertRef.current = currentAlert;
@@ -219,6 +229,7 @@ export default function ObsOverlayPage({
       setOverlayOrigin(window.location.origin);
       try {
         const params = new URLSearchParams(window.location.search);
+        setIsPreviewMode(params.get("preview") === "1");
         if (params.get("edit") === "1") {
           setIsEditLayout(true);
         }
@@ -273,7 +284,7 @@ export default function ObsOverlayPage({
           }
         })
         .catch(() => {});
-    }, 3500);
+    }, 5000);
     return () => clearInterval(watchTimer);
   }, [layout.showQrWidget, qrReference, username]);
 
@@ -372,13 +383,6 @@ export default function ObsOverlayPage({
     };
   }, [cleanupAudioElement]);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const search = new URLSearchParams(window.location.search);
-      setIsPreviewMode(search.get("preview") === "1");
-    }
-  }, []);
-
   // Fetch live SOL/USD price for real-time USD conversion on alert cards
   useEffect(() => {
     const fetchPrice = () => {
@@ -433,37 +437,45 @@ export default function ObsOverlayPage({
 
       addToCappedSet(seenSigs.current, item.signature);
       setQueue((prev) => [...prev, item]);
-      setGoal((prev) => ({
-        ...prev,
-        currentSol: prev.currentSol + item.amountSol,
-      }));
-      setStats((prev) => ({
-        totalTips: prev.totalTips + 1,
-        totalVolumeSol: prev.totalVolumeSol + item.amountSol,
-      }));
+      if (authoritativeAheadRef.current > 0) {
+        authoritativeAheadRef.current -= 1;
+      } else {
+        optimisticAheadRef.current += 1;
+        setGoal((prev) => ({
+          ...prev,
+          currentSol: prev.currentSol + item.amountSol,
+        }));
+        setStats((prev) => ({
+          totalTips: prev.totalTips + 1,
+          totalVolumeSol: prev.totalVolumeSol + item.amountSol,
+        }));
+      }
     },
     [toAlertItem]
   );
 
   // Initial localStorage goal & seen tracking
   useEffect(() => {
-    const creator = getStoredCreator(username);
-    const localTips = getStoredTips(username);
-    if (isFirstLocalLoad.current) {
-      localTips.forEach((t) => addToCappedSet(seenSigs.current, t.signature));
-      if (localTips.length > 0) {
-        setLatestTip(toAlertItem(localTips[0]));
+    const timer = setTimeout(() => {
+      const creator = getStoredCreator(username);
+      const localTips = getStoredTips(username);
+      if (isFirstLocalLoad.current) {
+        localTips.forEach((t) => addToCappedSet(seenSigs.current, t.signature));
+        if (localTips.length > 0) {
+          setLatestTip(toAlertItem(localTips[0]));
+        }
+        isFirstLocalLoad.current = false;
       }
-      isFirstLocalLoad.current = false;
-    }
-    if (creator) {
-      setGoal({
-        title: creator.goalTitle || "Stream Goal",
-        currentSol: (creator.goalCurrentLamports || 0) / 1_000_000_000,
-        targetSol:
-          (creator.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
-      });
-    }
+      if (creator) {
+        setGoal({
+          title: creator.goalTitle || "Stream Goal",
+          currentSol: (creator.goalCurrentLamports || 0) / 1_000_000_000,
+          targetSol:
+            (creator.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
+        });
+      }
+    }, 0);
+    return () => clearTimeout(timer);
   }, [username, toAlertItem]);
 
   // 1. Primary Real-Time Transport: Server-Sent Events (SSE) for instant <50ms cross-device alerts + ElevenLabs audio
@@ -480,13 +492,17 @@ export default function ObsOverlayPage({
         const data = JSON.parse(evt.data);
         if (data?.creator) {
           const c = data.creator;
+          const totalTips = Number(c.totalTips) || 0;
+          syncedTotalTipsRef.current = totalTips;
+          optimisticAheadRef.current = 0;
+          authoritativeAheadRef.current = 0;
           setGoal({
             title: c.goalTitle || "Stream Goal",
             currentSol: (c.goalCurrentLamports || 0) / 1_000_000_000,
             targetSol: (c.goalTargetLamports || 1_000_000_000) / 1_000_000_000,
           });
           setStats({
-            totalTips: Number(c.totalTips) || 0,
+            totalTips,
             totalVolumeSol: (Number(c.totalVolume) || 0) / 1_000_000_000,
           });
         }
@@ -566,12 +582,26 @@ export default function ObsOverlayPage({
         (payload) => {
           const c: any = payload.new;
           if (!c) return;
+          const newTotalTips = Number(c.total_tips) || 0;
+          const delta = Math.max(0, newTotalTips - syncedTotalTipsRef.current);
+          syncedTotalTipsRef.current = Math.max(syncedTotalTipsRef.current, newTotalTips);
+          const consumed = Math.min(delta, optimisticAheadRef.current);
+          optimisticAheadRef.current -= consumed;
+          authoritativeAheadRef.current += delta - consumed;
+
           setGoal({
             title: c.goal_title || "Stream Goal",
             currentSol: (Number(c.goal_current_lamports) || 0) / 1_000_000_000,
             targetSol:
               (Number(c.goal_target_lamports) || 1_000_000_000) / 1_000_000_000,
           });
+          setStats((prev) => ({
+            totalTips: Math.max(prev.totalTips, newTotalTips),
+            totalVolumeSol: Math.max(
+              prev.totalVolumeSol,
+              (Number(c.total_volume_lamports) || 0) / 1_000_000_000
+            ),
+          }));
         }
       )
       .on(
@@ -633,8 +663,11 @@ export default function ObsOverlayPage({
   useEffect(() => {
     if (currentAlert || queue.length === 0) return;
     const nextAlert = queue[0];
-    setQueue((prev) => prev.filter((item) => item.id !== nextAlert.id));
-    setCurrentAlert(nextAlert);
+    const promoTimer = setTimeout(() => {
+      setQueue((prev) => prev.filter((item) => item.id !== nextAlert.id));
+      setCurrentAlert(nextAlert);
+    }, 0);
+    return () => clearTimeout(promoTimer);
   }, [currentAlert, queue]);
 
   // Helper to play Audio element cleanly and fall back on playback failure
@@ -672,52 +705,95 @@ export default function ObsOverlayPage({
     return () => clearTimeout(dismissTimer);
   }, [currentAlert?.id]);
 
-  // 3c. Chime + 220ms Audio Trigger keyed strictly to currentAlert?.id
+  // 3c. Consolidated Chime + 220ms ElevenLabs Audio + Delayed Browser-Speech Fallback
   useEffect(() => {
-    const alertId = currentAlert?.id;
-    const alert = currentAlertRef.current;
-    if (!alertId || !alert) return;
-
-    void playFastChime();
-
-    const audioTimer = setTimeout(() => {
-      const latestAlert = currentAlertRef.current;
-      if (!latestAlert || latestAlert.id !== alertId) return;
-      if (playedAudioSigs.current.has(latestAlert.signature)) return;
-
-      addToCappedSet(playedAudioSigs.current, latestAlert.signature);
-
-      const cachedAudio =
-        latestAlert.audioUrl ||
-        audioBySig.current.get(latestAlert.signature) ||
-        null;
-
-      if (cachedAudio) {
-        playTipAudio(cachedAudio, latestAlert, true);
-      } else {
-        speakFastFallback(
-          latestAlert.displayName,
-          latestAlert.amountSol,
-          latestAlert.message
-        );
+    const clearAudioTimers = () => {
+      if (audioTimerRef.current) {
+        clearTimeout(audioTimerRef.current);
+        audioTimerRef.current = null;
       }
-    }, 220);
+      if (fallbackTimerRef.current) {
+        clearTimeout(fallbackTimerRef.current);
+        fallbackTimerRef.current = null;
+      }
+    };
+
+    const alertId = currentAlert?.id;
+    const alertSnapshot = currentAlertRef.current;
+    if (!alertId || !alertSnapshot) {
+      clearAudioTimers();
+      return;
+    }
+
+    if (audioPlaybackRef.current.alertId !== alertId) {
+      audioPlaybackRef.current = {
+        alertId,
+        chimeDoneAt: Date.now() + 220,
+        audioPlayed: false,
+      };
+      void playFastChime();
+    }
+
+    if (audioPlaybackRef.current.audioPlayed) {
+      return;
+    }
+
+    clearAudioTimers();
+    const remainingChimeMs = Math.max(
+      0,
+      audioPlaybackRef.current.chimeDoneAt - Date.now()
+    );
+
+    const resolvedAudio =
+      currentAlert?.audioUrl ||
+      audioBySig.current.get(alertSnapshot.signature) ||
+      null;
+
+    if (resolvedAudio) {
+      audioTimerRef.current = setTimeout(() => {
+        const latest = currentAlertRef.current;
+        if (!latest || latest.id !== alertId) return;
+        if (
+          audioPlaybackRef.current.audioPlayed ||
+          playedAudioSigs.current.has(latest.signature)
+        ) {
+          return;
+        }
+        audioPlaybackRef.current.audioPlayed = true;
+        addToCappedSet(playedAudioSigs.current, latest.signature);
+        playTipAudio(resolvedAudio, latest, true);
+      }, remainingChimeMs);
+    } else {
+      // Wait briefly for server ElevenLabs audio URL before falling back to browser SpeechSynthesis
+      fallbackTimerRef.current = setTimeout(() => {
+        const latest = currentAlertRef.current;
+        if (!latest || latest.id !== alertId) return;
+        if (
+          audioPlaybackRef.current.audioPlayed ||
+          playedAudioSigs.current.has(latest.signature)
+        ) {
+          return;
+        }
+        const lateAudio =
+          latest.audioUrl || audioBySig.current.get(latest.signature) || null;
+        audioPlaybackRef.current.audioPlayed = true;
+        addToCappedSet(playedAudioSigs.current, latest.signature);
+        if (lateAudio) {
+          playTipAudio(lateAudio, latest, true);
+        } else {
+          speakFastFallback(
+            latest.displayName,
+            latest.amountSol,
+            latest.message
+          );
+        }
+      }, remainingChimeMs + 1400);
+    }
 
     return () => {
-      clearTimeout(audioTimer);
+      clearAudioTimers();
     };
-  }, [currentAlert?.id, playTipAudio]);
-
-  // 3d. If ElevenLabs audio URL arrives while alert is active and hasn't played yet
-  useEffect(() => {
-    if (
-      currentAlert?.audioUrl &&
-      !playedAudioSigs.current.has(currentAlert.signature)
-    ) {
-      addToCappedSet(playedAudioSigs.current, currentAlert.signature);
-      playTipAudio(currentAlert.audioUrl, currentAlert, false);
-    }
-  }, [currentAlert?.id, currentAlert?.audioUrl, currentAlert, playTipAudio]);
+  }, [currentAlert?.id, currentAlert?.audioUrl, playTipAudio]);
 
   const replayLatestRealTip = () => {
     if (!latestTip) return;

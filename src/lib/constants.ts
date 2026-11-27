@@ -79,6 +79,28 @@ export const MAX_DISPLAY_NAME_CHARS = 32;
 export const MAX_MESSAGE_CHARS = 100;
 export const MIN_TIP_LAMPORTS = 1_000_000; // 0.001 SOL
 
+export const RESERVED_HANDLES = new Set([
+  "claim",
+  "dashboard",
+  "overlay",
+  "api",
+  "actions",
+  "actions.json",
+  "_next",
+  "favicon.ico",
+  "robots.txt",
+  "sitemap.xml",
+  "login",
+  "signup",
+  "admin",
+  "settings",
+  "solstream",
+]);
+
+export function isReservedHandle(username: string): boolean {
+  return RESERVED_HANDLES.has(username.trim().toLowerCase());
+}
+
 /**
  * Maps any manual/custom SOL amount to one of the valid on-chain tiers (0..=5)
  * so custom amounts work seamlessly with the deployed Anchor program constraint.

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import Image from "next/image";
 import {
   TrendingUp,
   TrendingDown,
@@ -130,9 +131,16 @@ export function SolanaMarketBoard({ onSolPriceLoaded }: SolanaMarketBoardProps) 
   );
 
   useEffect(() => {
-    fetchPrices(false);
-    const interval = setInterval(() => fetchPrices(false), 30_000);
-    return () => clearInterval(interval);
+    const initialTimer = setTimeout(() => {
+      void fetchPrices(false);
+    }, 0);
+    const interval = setInterval(() => {
+      void fetchPrices(false);
+    }, 30_000);
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(interval);
+    };
   }, [fetchPrices]);
 
   useEffect(() => {
@@ -214,9 +222,11 @@ export function SolanaMarketBoard({ onSolPriceLoaded }: SolanaMarketBoardProps) 
             {/* Left: SOL Live Price */}
             <div className="lg:col-span-5 flex items-center gap-4">
               {solCoin.image ? (
-                <img
+                <Image
                   src={solCoin.image}
                   alt="Solana"
+                  width={56}
+                  height={56}
                   className="w-14 h-14 rounded-2xl bg-black/40 p-1.5 border border-white/10 shadow-lg"
                 />
               ) : (
@@ -413,9 +423,11 @@ export function SolanaMarketBoard({ onSolPriceLoaded }: SolanaMarketBoardProps) 
                       <td className="py-4 px-4">
                         <div className="flex items-center gap-3">
                           {coin.image ? (
-                            <img
+                            <Image
                               src={coin.image}
                               alt={coin.name}
+                              width={32}
+                              height={32}
                               className="w-8 h-8 rounded-full bg-black/50 border border-white/10 p-0.5 flex-shrink-0"
                             />
                           ) : (

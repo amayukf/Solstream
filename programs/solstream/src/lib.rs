@@ -13,6 +13,19 @@ pub const MAX_DISPLAY_NAME_BYTES: usize = 96; // UI: 32 chars
 pub const MAX_MESSAGE_BYTES: usize = 300; // UI: 100 chars
 pub const MAX_TIER: u8 = 5; // 0..=5 -> Coffee..Crown
 pub const MIN_TIP_LAMPORTS: u64 = 1_000_000; // 0.001 SOL, blocks dust/TTS spam
+pub const RESERVED_USERNAMES: &[&str] = &[
+    "claim",
+    "dashboard",
+    "overlay",
+    "api",
+    "actions",
+    "_next",
+    "login",
+    "signup",
+    "admin",
+    "settings",
+    "solstream",
+];
 
 #[program]
 pub mod solstream {
@@ -32,6 +45,10 @@ pub mod solstream {
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
             SolStreamError::InvalidUsername
+        );
+        require!(
+            !RESERVED_USERNAMES.contains(&username.as_str()),
+            SolStreamError::ReservedUsername
         );
         require!(voice_id.len() <= MAX_VOICE_ID, SolStreamError::VoiceIdTooLong);
         require!(goal_title.len() <= MAX_GOAL_TITLE, SolStreamError::GoalTitleTooLong);
@@ -262,4 +279,6 @@ pub enum SolStreamError {
     WrongRecipient,
     #[msg("Math overflow")]
     MathOverflow,
+    #[msg("This handle name is reserved by the platform")]
+    ReservedUsername,
 }

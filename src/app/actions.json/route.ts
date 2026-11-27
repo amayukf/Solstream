@@ -9,7 +9,7 @@ export async function GET() {
           apiPath: "/api/actions/**",
         },
         {
-          pathPattern: "/*",
+          pathPattern: "/tip/*",
           apiPath: "/api/actions/tip/*",
         },
       ],

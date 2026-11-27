@@ -15,6 +15,20 @@ import {
   rateLimitJsonResponse,
 } from "@/lib/rateLimit";
 
+function needsCreatorSync(dbRow: DbCreatorRow | undefined, chain: OnChainCreator): boolean {
+  if (!dbRow) return true;
+  return (
+    dbRow.username !== chain.username ||
+    dbRow.pda !== chain.pda ||
+    dbRow.voiceId !== chain.voiceId ||
+    dbRow.goalTitle !== chain.goalTitle ||
+    dbRow.goalTargetLamports !== chain.goalTargetLamports ||
+    dbRow.goalCurrentLamports !== chain.goalCurrentLamports ||
+    dbRow.totalTips !== chain.totalTips ||
+    dbRow.totalVolume !== chain.totalVolume
+  );
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const fresh = searchParams.get("fresh") === "1";
@@ -51,11 +65,15 @@ export async function GET(req: Request) {
     );
   }
 
-  // Sync chain creators into DB individually; never 500 directory for one duplicate (23505) or DB outage
+  // Sync chain creators into DB only when missing or stats/fields differ
   if (dbHealthy && chainCreators.length > 0) {
+    const dbByAuthority = new Map(dbCreators.map((r) => [r.authority, r]));
+    let syncedAny = false;
     for (const c of chainCreators) {
+      if (!needsCreatorSync(dbByAuthority.get(c.authority), c)) continue;
       try {
         await syncCreatorExactStatsInDb(c);
+        syncedAny = true;
       } catch (err) {
         if (isPostgresUniqueViolation(err)) {
           console.warn(
@@ -67,10 +85,12 @@ export async function GET(req: Request) {
       }
     }
 
-    try {
-      dbCreators = await getCreatorsFromDb();
-    } catch (err) {
-      console.warn("GET /api/creators DB re-read warning:", err);
+    if (syncedAny) {
+      try {
+        dbCreators = await getCreatorsFromDb();
+      } catch (err) {
+        console.warn("GET /api/creators DB re-read warning:", err);
+      }
     }
   }
 

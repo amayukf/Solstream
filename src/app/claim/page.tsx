@@ -6,7 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useSolStreamProgram } from "@/hooks/useSolStreamProgram";
-import { saveStoredCreator, getStoredCreator } from "@/lib/storage";
+import { CURATED_VOICES, isReservedHandle } from "@/lib/constants";
+import { saveStoredCreator } from "@/lib/storage";
 import { SolanaLogo } from "@/components/SolanaLogo";
 import { Check, Loader2, AlertCircle } from "lucide-react";
 
@@ -15,12 +16,6 @@ const WalletMultiButton = dynamic(
     (await import("@solana/wallet-adapter-react-ui")).WalletMultiButton,
   { ssr: false }
 );
-
-const VOICES = [
-  { id: "pNInz6obpgDQGcFmaJgB", name: "Adam", label: "Energetic male" },
-  { id: "21m00Tcm4TlvDq8ikWAM", name: "Rachel", label: "Calm female" },
-  { id: "ErXwobaYiN019PkySvjV", name: "Antoni", label: "Storyteller" },
-];
 
 function ClaimHandleForm() {
   const router = useRouter();
@@ -34,7 +29,7 @@ function ClaimHandleForm() {
   } = useSolStreamProgram();
 
   const [handle, setHandle] = useState("");
-  const [selectedVoice, setSelectedVoice] = useState(VOICES[0].id);
+  const [selectedVoice, setSelectedVoice] = useState(CURATED_VOICES[0].id);
   const [goalTitle, setGoalTitle] = useState("Mic upgrade");
   const [goalTarget, setGoalTarget] = useState("3.0");
   const [importUrl, setImportUrl] = useState("");
@@ -84,26 +79,33 @@ function ClaimHandleForm() {
   }, []);
 
   const cleanHandle = handle.trim().toLowerCase();
+  const isHandleReserved = Boolean(cleanHandle && isReservedHandle(cleanHandle));
 
   // Check both on-chain HandleRegistry PDA and chain+DB creator API whenever cleanHandle changes
   useEffect(() => {
-    if (!cleanHandle) {
-      setHandleLookup({
-        handle: "",
-        checking: false,
-        authority: null,
-        error: null,
-      });
-      return;
+    if (!cleanHandle || isReservedHandle(cleanHandle)) {
+      const resetTimer = setTimeout(() => {
+        setHandleLookup({
+          handle: cleanHandle,
+          checking: false,
+          authority: null,
+          error: null,
+        });
+      }, 0);
+      return () => clearTimeout(resetTimer);
     }
 
     let cancelled = false;
-    setHandleLookup({
-      handle: cleanHandle,
-      checking: true,
-      authority: null,
-      error: null,
-    });
+    const startTimer = setTimeout(() => {
+      if (!cancelled) {
+        setHandleLookup({
+          handle: cleanHandle,
+          checking: true,
+          authority: null,
+          error: null,
+        });
+      }
+    }, 0);
 
     const timer = setTimeout(async () => {
       const [registryRes, apiRes] = await Promise.allSettled([
@@ -144,6 +146,7 @@ function ClaimHandleForm() {
 
     return () => {
       cancelled = true;
+      clearTimeout(startTimer);
       clearTimeout(timer);
     };
   }, [cleanHandle, fetchHandleRegistry]);
@@ -156,6 +159,7 @@ function ClaimHandleForm() {
       : null;
   const isCheckingHandle =
     Boolean(cleanHandle) &&
+    !isHandleReserved &&
     handleLookup.handle === cleanHandle &&
     handleLookup.checking;
 
@@ -171,9 +175,12 @@ function ClaimHandleForm() {
 
   useEffect(() => {
     const queryHandle = searchParams?.get("handle");
-    if (queryHandle) {
-      setHandle(queryHandle.toLowerCase().replace(/[^a-z0-9_]/g, ""));
-    }
+    if (!queryHandle) return;
+    const normalized = queryHandle.toLowerCase().replace(/[^a-z0-9_]/g, "");
+    const timer = setTimeout(() => {
+      setHandle(normalized);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [searchParams]);
 
   // Check if wallet already has an on-chain account
@@ -210,7 +217,7 @@ function ClaimHandleForm() {
             {
               username: uname,
               authority: publicKey.toBase58(),
-              voiceId: acc.voiceId || acc.voice_id || VOICES[0].id,
+              voiceId: acc.voiceId || acc.voice_id || CURATED_VOICES[0].id,
               goalTitle: acc.goalTitle || acc.goal_title || "Stream Goal",
               goalTargetLamports: targetLamports,
               goalCurrentLamports: currentLamports,
@@ -264,8 +271,12 @@ function ClaimHandleForm() {
       setError("Please connect your Phantom wallet first.");
       return;
     }
-    if (!handle.trim()) {
+    if (!cleanHandle) {
       setError("Please enter a valid handle.");
+      return;
+    }
+    if (isReservedHandle(cleanHandle)) {
+      setError(`@${cleanHandle} is a reserved platform handle. Choose a different handle.`);
       return;
     }
     if (isHandleTakenByOther) {
@@ -320,18 +331,18 @@ function ClaimHandleForm() {
         return;
       }
 
-      const lamports = Math.round(parseFloat(goalTarget) * 1_000_000_000);
+      const lamports = Math.round(targetNum * 1_000_000_000);
 
-      // Call Anchor on-chain initialize_creator
-      await initializeCreator(handle, selectedVoice, lamports, goalTitle);
+      // Call Anchor on-chain initialize_creator with trimmed values
+      await initializeCreator(cleanHandle, selectedVoice, lamports, cleanGoalTitle);
 
       // Save real creator profile to localStorage
       saveStoredCreator(
         {
-          username: handle,
+          username: cleanHandle,
           authority: publicKey.toBase58(),
           voiceId: selectedVoice,
-          goalTitle,
+          goalTitle: cleanGoalTitle,
           goalTargetLamports: lamports,
           goalCurrentLamports: 0,
           createdAt: Date.now(),
@@ -363,20 +374,33 @@ function ClaimHandleForm() {
         errMsg.includes("already in use") ||
         errMsg.includes("AccountAlreadyInUse")
       ) {
-        // Already initialized on-chain
-        saveStoredCreator(
-          {
-            username: existingOnChainHandle || handle,
-            authority: publicKey.toBase58(),
-            voiceId: selectedVoice,
-            goalTitle,
-            goalTargetLamports: Math.round(parseFloat(goalTarget) * 1_000_000_000),
-            goalCurrentLamports: 0,
-            createdAt: Date.now(),
-          },
-          publicKey.toBase58()
+        const ownAcc = await fetchCreatorAccount(getCreatorPda(publicKey)).catch(
+          () => null
         );
-        router.push("/dashboard");
+        if (ownAcc && ownAcc.username) {
+          saveStoredCreator(
+            {
+              username: String(ownAcc.username).toLowerCase(),
+              authority: publicKey.toBase58(),
+              voiceId: ownAcc.voiceId || ownAcc.voice_id || selectedVoice,
+              goalTitle: ownAcc.goalTitle || ownAcc.goal_title || cleanGoalTitle,
+              goalTargetLamports: Math.round(targetNum * 1_000_000_000),
+              goalCurrentLamports: 0,
+              createdAt: Date.now(),
+            },
+            publicKey.toBase58()
+          );
+          await fetch("/api/creators/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress: publicKey.toBase58() }),
+          }).catch(() => {});
+          router.push("/dashboard");
+        } else {
+          setError(
+            `@${cleanHandle} was just claimed by another wallet on Solana Devnet. Choose a different handle.`
+          );
+        }
       } else {
         setError(errMsg || "Failed to initialize creator profile on Solana Devnet.");
       }
@@ -509,7 +533,9 @@ function ClaimHandleForm() {
               {cleanHandle && (
                 <span
                   className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-                    isCheckingHandle
+                    isHandleReserved
+                      ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
+                      : isCheckingHandle
                       ? "text-zinc-300 bg-white/5 border-white/10"
                       : isHandleTakenByOther
                       ? "text-rose-400 bg-rose-500/10 border-rose-500/20"
@@ -520,7 +546,9 @@ function ClaimHandleForm() {
                       : "text-[#14F195] bg-[#14F195]/10 border-[#14F195]/20"
                   }`}
                 >
-                  {isCheckingHandle
+                  {isHandleReserved
+                    ? "Reserved"
+                    : isCheckingHandle
                     ? "Checking..."
                     : isHandleTakenByOther
                     ? "Taken"
@@ -535,7 +563,12 @@ function ClaimHandleForm() {
             <span className="block text-[11px] text-zinc-500 mt-1.5">
               Lowercase letters, numbers and underscore · 1 to 32 characters
             </span>
-            {handleLookupError && !isHandleTakenByOther && !isHandleOwnedBySelf && (
+            {isHandleReserved && (
+              <span className="block text-[11px] text-rose-400 mt-1">
+                &quot;@{cleanHandle}&quot; is a reserved platform handle. Please choose another.
+              </span>
+            )}
+            {handleLookupError && !isHandleReserved && !isHandleTakenByOther && !isHandleOwnedBySelf && (
               <span className="block text-[11px] text-amber-300 mt-1">
                 {handleLookupError}
               </span>
@@ -547,8 +580,8 @@ function ClaimHandleForm() {
             <label className="block text-xs font-bold text-zinc-300 mb-2">
               Alert voice
             </label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              {VOICES.map((v) => {
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {CURATED_VOICES.map((v) => {
                 const isSelected = selectedVoice === v.id;
                 return (
                   <button
@@ -564,7 +597,9 @@ function ClaimHandleForm() {
                     <div className="text-sm font-bold text-white mb-0.5">
                       {v.name}
                     </div>
-                    <div className="text-xs text-zinc-400">{v.label}</div>
+                    <div className="text-xs text-zinc-400">
+                      {v.gender} · {v.accent}
+                    </div>
                   </button>
                 );
               })}
@@ -592,8 +627,8 @@ function ClaimHandleForm() {
               </label>
               <input
                 type="number"
-                step="0.1"
-                min="0.1"
+                step="any"
+                min="0.01"
                 value={goalTarget}
                 onChange={(e) => setGoalTarget(e.target.value)}
                 className="w-full bg-[#090A0F] border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-mono focus:outline-none focus:border-[#9945FF]"
@@ -622,7 +657,7 @@ function ClaimHandleForm() {
             ) : (
               <button
                 type="submit"
-                disabled={isLoading || isHandleTakenByOther}
+                disabled={isLoading || isHandleTakenByOther || isHandleReserved}
                 className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-[#14F195] hover:bg-[#12DB87] text-[#090A0F] font-black text-sm tracking-wide transition-all shadow-lg shadow-[#14F195]/20 flex items-center justify-center gap-2 flex-shrink-0 disabled:opacity-50"
               >
                 {isLoading ? (
@@ -643,10 +678,7 @@ function ClaimHandleForm() {
 }
 
 export default function ClaimHandlePage() {
-  const { connected, publicKey } = useWallet();
-  const shortWallet = publicKey
-    ? `${publicKey.toBase58().slice(0, 4)}...${publicKey.toBase58().slice(-4)}`
-    : null;
+  const { connected } = useWallet();
 
   return (
     <div className="min-h-screen bg-[#0B0C10] text-[#E0E2EC] overflow-x-clip">
@@ -659,15 +691,14 @@ export default function ClaimHandlePage() {
           </span>
         </Link>
 
-        <div>
-          {connected ? (
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#13141F] border border-white/10 text-xs font-mono text-zinc-300">
-              <span className="w-2 h-2 rounded-full bg-[#14F195]" />
-              <span>{shortWallet} · Devnet</span>
-            </div>
-          ) : (
-            <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
+        <div className="flex items-center gap-2">
+          {connected && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#13141F] border border-white/10 text-[11px] font-mono text-zinc-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#14F195]" />
+              Devnet
+            </span>
           )}
+          <WalletMultiButton className="!bg-[#1D1B2E] !text-white !font-semibold !text-xs !rounded-xl !h-10 !px-4 !border !border-white/10" />
         </div>
       </header>
 
