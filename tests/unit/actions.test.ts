@@ -125,6 +125,19 @@ describe("Solana Actions / Blinks routes", () => {
         expect(action.href).to.include(`&ref=${encodeURIComponent(refKey)}`);
       }
 
+      const underMinVoteRes = await route.POST(
+        new Request(
+          `https://solstream.app/api/actions/tip/kaba?amount=0.001&vote=A&ref=${refKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ account: donor }),
+          }
+        ),
+        { params: Promise.resolve({ username: "kaba" }) }
+      );
+      expect(underMinVoteRes.status).to.equal(400);
+
       const postRes = await route.POST(
         new Request(
           `https://solstream.app/api/actions/tip/kaba?amount=0.01&vote=A&ref=${refKey}`,

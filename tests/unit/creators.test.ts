@@ -129,4 +129,45 @@ describe("Creators API & Reserved Handle Guards", () => {
       }
     }
   });
+
+  it("returns 503 instead of 404 when DB has no creator row and Solana RPC fails", async () => {
+    const origSolana = require.cache[solanaServerPath]?.exports;
+    const origDb = require.cache[supabaseDbPath]?.exports;
+
+    try {
+      (require.cache[solanaServerPath] as Mutable<NodeModule>).exports = {
+        ...solanaServer,
+        fetchOnChainCreatorByUsername: async () => {
+          throw new Error("RPC down");
+        },
+      };
+
+      (require.cache[supabaseDbPath] as Mutable<NodeModule>).exports = {
+        ...supabaseDb,
+        getCreatorFromDb: async () => null,
+      };
+
+      delete require.cache[creatorRoutePath];
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const route = require("../../src/app/api/creators/[username]/route") as {
+        GET: (
+          req: Request,
+          ctx: { params: Promise<{ username: string }> }
+        ) => Promise<Response>;
+      };
+
+      const res = await route.GET(
+        new Request("https://solstream.app/api/creators/nobody"),
+        { params: Promise.resolve({ username: "nobody" }) }
+      );
+      expect(res.status).to.equal(503);
+    } finally {
+      if (origSolana) {
+        (require.cache[solanaServerPath] as Mutable<NodeModule>).exports = origSolana;
+      }
+      if (origDb) {
+        (require.cache[supabaseDbPath] as Mutable<NodeModule>).exports = origDb;
+      }
+    }
+  });
 });

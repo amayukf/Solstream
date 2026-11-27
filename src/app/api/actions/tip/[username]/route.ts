@@ -254,8 +254,28 @@ export async function POST(
     )
       .trim()
       .toUpperCase();
-    const votePrefix =
-      voteRaw === "A" || voteRaw === "B" ? `[VOTE:${voteRaw}] ` : "";
+    const isVote = voteRaw === "A" || voteRaw === "B";
+    if (isVote) {
+      try {
+        const activePoll = await getPollWithResultsFromDb(username);
+        if (
+          activePoll &&
+          activePoll.isActive &&
+          amountLamports < activePoll.minVoteLamports
+        ) {
+          const minVoteSol = (
+            activePoll.minVoteLamports / 1_000_000_000
+          ).toFixed(3);
+          return Response.json(
+            { message: `Minimum tip to vote in this poll is ${minVoteSol} SOL` },
+            { status: 400, headers: ACTIONS_CORS_HEADERS }
+          );
+        }
+      } catch {
+        // Non-fatal: allow tip if poll lookup fails
+      }
+    }
+    const votePrefix = isVote ? `[VOTE:${voteRaw}] ` : "";
 
     const rawName = String(
       actionData.name ?? url.searchParams.get("name") ?? ""

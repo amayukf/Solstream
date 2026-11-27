@@ -136,6 +136,12 @@ export async function GET(
       : dbCreator;
 
     if (!resolvedCreator) {
+      if (!chainHealthy) {
+        return NextResponse.json(
+          { error: "Solana RPC temporarily unavailable" },
+          { status: 503 }
+        );
+      }
       return NextResponse.json(
         { creator: null, tips: [], found: false },
         { status: 404 }
