@@ -16,6 +16,7 @@ import { Move, Pencil, RotateCcw, Check, QrCode, Vote } from "lucide-react";
 interface WidgetOffset {
   x: number;
   y: number;
+  scale?: number;
 }
 
 interface OverlayLayout {
@@ -29,14 +30,24 @@ interface OverlayLayout {
 }
 
 const DEFAULT_OVERLAY_LAYOUT: OverlayLayout = {
-  alertPos: { x: 0, y: 0 },
-  goalPos: { x: 0, y: 0 },
-  supporterPos: { x: 0, y: 0 },
-  pollPos: { x: 0, y: 0 },
-  qrPos: { x: 0, y: 0 },
+  alertPos: { x: 0, y: 0, scale: 1 },
+  goalPos: { x: 0, y: 0, scale: 1 },
+  supporterPos: { x: 0, y: 0, scale: 1 },
+  pollPos: { x: 0, y: 0, scale: 1 },
+  qrPos: { x: 0, y: 0, scale: 1 },
   showQrWidget: false,
   customGoalTitle: "",
 };
+
+function sanitizeWidgetOffset(raw?: Partial<WidgetOffset>): WidgetOffset {
+  const x = typeof raw?.x === "number" && Number.isFinite(raw.x) ? raw.x : 0;
+  const y = typeof raw?.y === "number" && Number.isFinite(raw.y) ? raw.y : 0;
+  const scale =
+    typeof raw?.scale === "number" && Number.isFinite(raw.scale)
+      ? Math.min(1.8, Math.max(0.5, raw.scale))
+      : 1;
+  return { x, y, scale };
+}
 
 interface AlertItem {
   id: string;
@@ -238,11 +249,11 @@ export default function ObsOverlayPage({
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<OverlayLayout>;
           setLayout({
-            alertPos: parsed.alertPos || { x: 0, y: 0 },
-            goalPos: parsed.goalPos || { x: 0, y: 0 },
-            supporterPos: parsed.supporterPos || { x: 0, y: 0 },
-            pollPos: parsed.pollPos || { x: 0, y: 0 },
-            qrPos: parsed.qrPos || { x: 0, y: 0 },
+            alertPos: sanitizeWidgetOffset(parsed.alertPos),
+            goalPos: sanitizeWidgetOffset(parsed.goalPos),
+            supporterPos: sanitizeWidgetOffset(parsed.supporterPos),
+            pollPos: sanitizeWidgetOffset(parsed.pollPos),
+            qrPos: sanitizeWidgetOffset(parsed.qrPos),
             showQrWidget: forceQr || Boolean(parsed.showQrWidget),
             customGoalTitle:
               typeof parsed.customGoalTitle === "string"
@@ -319,6 +330,7 @@ export default function ObsOverlayPage({
         const next: OverlayLayout = {
           ...latestLayout,
           [key]: {
+            ...origin,
             x: Math.round(origin.x + (ev.clientX - startX)),
             y: Math.round(origin.y + (ev.clientY - startY)),
           },
@@ -338,6 +350,106 @@ export default function ObsOverlayPage({
     },
     [isEditLayout, layout, persistLayout]
   );
+
+  const startWidgetResize = useCallback(
+    (
+      key: "alertPos" | "goalPos" | "supporterPos" | "pollPos" | "qrPos",
+      e: React.MouseEvent<HTMLElement>
+    ) => {
+      if (!isEditLayout || e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const origin = layout[key];
+      const baseScale = origin.scale ?? 1;
+      let latestLayout = layout;
+
+      const onMove = (ev: MouseEvent) => {
+        const delta = (ev.clientX - startX + (ev.clientY - startY)) / 220;
+        const nextScale = Number(
+          Math.min(1.8, Math.max(0.5, baseScale + delta)).toFixed(2)
+        );
+        const next: OverlayLayout = {
+          ...latestLayout,
+          [key]: { ...origin, scale: nextScale },
+        };
+        latestLayout = next;
+        setLayout(next);
+      };
+
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        persistLayout(latestLayout);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [isEditLayout, layout, persistLayout]
+  );
+
+  const stepWidgetScale = useCallback(
+    (
+      key: "alertPos" | "goalPos" | "supporterPos" | "pollPos" | "qrPos",
+      delta: number
+    ) => {
+      const origin = layout[key];
+      const nextScale = Number(
+        Math.min(1.8, Math.max(0.5, (origin.scale ?? 1) + delta)).toFixed(2)
+      );
+      persistLayout({
+        ...layout,
+        [key]: { ...origin, scale: nextScale },
+      });
+    },
+    [layout, persistLayout]
+  );
+
+  const renderResizeControls = (
+    key: "alertPos" | "goalPos" | "supporterPos" | "pollPos" | "qrPos"
+  ) => {
+    if (!isEditLayout) return null;
+    const pct = Math.round((layout[key].scale ?? 1) * 100);
+    return (
+      <>
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          className="absolute -top-7 right-2 z-30 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-black/90 border border-white/20 text-[10px] font-mono text-white shadow-lg"
+        >
+          <button
+            type="button"
+            onClick={() => stepWidgetScale(key, -0.1)}
+            title="Make smaller"
+            className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center font-bold cursor-pointer"
+          >
+            -
+          </button>
+          <span className="px-1 text-[#14F195]">{pct}%</span>
+          <button
+            type="button"
+            onClick={() => stepWidgetScale(key, 0.1)}
+            title="Make bigger"
+            className="w-4 h-4 rounded-full hover:bg-white/20 flex items-center justify-center font-bold cursor-pointer"
+          >
+            +
+          </button>
+        </div>
+        <div
+          role="slider"
+          aria-label="Drag to resize widget"
+          aria-valuemin={50}
+          aria-valuemax={180}
+          aria-valuenow={pct}
+          title="Drag corner to resize"
+          onMouseDown={(e) => startWidgetResize(key, e)}
+          className="absolute -bottom-1.5 -right-1.5 z-30 w-4 h-4 rounded-full bg-[#14F195] border-2 border-[#0B0C10] cursor-nwse-resize shadow-lg"
+        />
+      </>
+    );
+  };
 
   const cleanupAudioElement = useCallback((el?: HTMLAudioElement | null) => {
     const target = el ?? activeAudioRef.current;
@@ -950,7 +1062,8 @@ export default function ObsOverlayPage({
             onMouseDown={(e) => startWidgetDrag("alertPos", e)}
             onDoubleClick={() => setIsEditLayout(true)}
             style={{
-              transform: `translate(${layout.alertPos.x}px, ${layout.alertPos.y}px)`,
+              transform: `translate(${layout.alertPos.x}px, ${layout.alertPos.y}px) scale(${layout.alertPos.scale ?? 1})`,
+              transformOrigin: "center center",
             }}
             className={`relative animate-bounce-short w-full max-w-2xl ${
               isEditLayout
@@ -958,6 +1071,7 @@ export default function ObsOverlayPage({
                 : ""
             }`}
           >
+            {renderResizeControls("alertPos")}
             {isEditLayout && (
               <div className="absolute -top-7 left-3 z-20 px-2.5 py-0.5 rounded-full bg-[#14F195] text-[#090A0F] text-[10px] font-black uppercase tracking-wider inline-flex items-center gap-1 shadow">
                 <Move className="w-3 h-3" />
@@ -1078,12 +1192,14 @@ export default function ObsOverlayPage({
           onMouseDown={(e) => startWidgetDrag("goalPos", e)}
           onDoubleClick={() => setIsEditLayout(true)}
           style={{
-            transform: `translate(${layout.goalPos.x}px, ${layout.goalPos.y}px)`,
+            transform: `translate(${layout.goalPos.x}px, ${layout.goalPos.y}px) scale(${layout.goalPos.scale ?? 1})`,
+            transformOrigin: "center center",
           }}
           className={`relative w-full max-w-md rounded-2xl bg-[#0F101A]/90 border border-white/10 p-4 backdrop-blur-md shadow-2xl ${
             isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#9945FF]/80" : ""
           }`}
         >
+          {renderResizeControls("goalPos")}
           <div className="flex items-center justify-between gap-2 text-xs font-bold mb-2">
             {isEditLayout && isEditingGoalText ? (
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
@@ -1159,12 +1275,14 @@ export default function ObsOverlayPage({
               onMouseDown={(e) => startWidgetDrag("pollPos", e)}
               onDoubleClick={() => setIsEditLayout(true)}
               style={{
-                transform: `translate(${layout.pollPos.x}px, ${layout.pollPos.y}px)`,
+                transform: `translate(${layout.pollPos.x}px, ${layout.pollPos.y}px) scale(${layout.pollPos.scale ?? 1})`,
+                transformOrigin: "center center",
               }}
-              className={`w-full max-w-sm rounded-2xl bg-[#0F101A]/90 border border-[#9945FF]/35 p-3.5 backdrop-blur-md shadow-2xl space-y-2 ${
+              className={`relative w-full max-w-sm rounded-2xl bg-[#0F101A]/90 border border-[#9945FF]/35 p-3.5 backdrop-blur-md shadow-2xl space-y-2 ${
                 isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#9945FF]/80" : ""
               }`}
             >
+              {renderResizeControls("pollPos")}
               <div className="flex items-center justify-between gap-2 text-[11px] font-bold">
                 <span className="inline-flex items-center gap-1.5 text-white truncate">
                   <Vote className="w-3.5 h-3.5 text-[#9945FF] flex-shrink-0" />
@@ -1210,12 +1328,14 @@ export default function ObsOverlayPage({
             onMouseDown={(e) => startWidgetDrag("qrPos", e)}
             onDoubleClick={() => setIsEditLayout(true)}
             style={{
-              transform: `translate(${layout.qrPos.x}px, ${layout.qrPos.y}px)`,
+              transform: `translate(${layout.qrPos.x}px, ${layout.qrPos.y}px) scale(${layout.qrPos.scale ?? 1})`,
+              transformOrigin: "center center",
             }}
-            className={`rounded-2xl bg-[#0F101A]/95 border border-[#14F195]/40 p-2.5 backdrop-blur-md shadow-2xl flex items-center gap-2.5 flex-shrink-0 ${
+            className={`relative rounded-2xl bg-[#0F101A]/95 border border-[#14F195]/40 p-2.5 backdrop-blur-md shadow-2xl flex items-center gap-2.5 flex-shrink-0 ${
               isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#14F195]/80" : ""
             }`}
           >
+            {renderResizeControls("qrPos")}
             <div className="bg-white p-1.5 rounded-xl flex-shrink-0">
               <QRCodeSVG
                 value={solanaPayQrValue}
@@ -1245,12 +1365,14 @@ export default function ObsOverlayPage({
             onMouseDown={(e) => startWidgetDrag("supporterPos", e)}
             onDoubleClick={() => setIsEditLayout(true)}
             style={{
-              transform: `translate(${layout.supporterPos.x}px, ${layout.supporterPos.y}px)`,
+              transform: `translate(${layout.supporterPos.x}px, ${layout.supporterPos.y}px) scale(${layout.supporterPos.scale ?? 1})`,
+              transformOrigin: "center center",
             }}
-            className={`rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm ${
+            className={`relative rounded-2xl bg-[#0F101A]/90 border border-white/10 px-4 py-3 backdrop-blur-md shadow-2xl flex items-center gap-3.5 max-w-sm ${
               isEditLayout ? "cursor-move ring-2 ring-dashed ring-[#00F0FF]/80" : ""
             }`}
           >
+            {renderResizeControls("supporterPos")}
             <GiftIcon tier={latestTip.tier} size="md" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
